@@ -10,7 +10,7 @@ plus images and media in `Data/`. Decoding comes from
 files saved by Keynote up to 14.5.
 
 For JavaScript and TypeScript, the same library is in [`js/`](js/) as the
-npm package `keynotejs`.
+npm package [`@kevsmac/keynotejs`](https://www.npmjs.com/package/@kevsmac/keynotejs).
 
 ## Install
 
