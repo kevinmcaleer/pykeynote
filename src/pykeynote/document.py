@@ -5,14 +5,20 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, Iterable, List, Optional, Tuple, Union
+from typing import Any, Iterable, List, Optional, Sequence, Tuple, Union
 
 from . import builds as _builds
+from . import charts as _charts
+from . import tables as _tables
+from . import drawables as _drawables
 from . import media as _media
 from . import slides
 from .builds import Build
+from .charts import Chart
+from .drawables import Color, Drawable, Shape
 from .media import Image, ImageSource
-from .package import Package, PathLike
+from .tables import Table
+from .package import Package, PathLike, remap_references
 from .text import Paragraph, ParagraphInput, Text
 
 
@@ -219,13 +225,13 @@ class Slide:
 
     def add_build(
         self,
-        target: Union[str, int] = "body",
+        target: Union[str, int, Drawable] = "body",
         effect: str = "dissolve",
         delivery: Optional[str] = None,
         duration: float = 1.0,
         kind: str = "in",
     ) -> Build:
-        """Animate ``target`` ("title", "body", or a drawable's identifier) onto the slide.
+        """Animate ``target`` ("title", "body", a shape, table or chart, or its identifier) onto the slide.
 
         ``delivery`` is "all at once" or "by bullet" (also "by paragraph");
         it defaults to "by bullet" for a body with several paragraphs. Each
@@ -238,6 +244,138 @@ class Slide:
     def clear_builds(self) -> None:
         """Remove every build from the slide."""
         _builds.clear_builds(self)
+
+    # --- shapes, tables and charts ---------------------------------------------
+
+    @property
+    def drawables(self) -> List[Drawable]:
+        """Shapes, text boxes, tables and charts on the slide, back to front (not the title or body)."""
+        return _drawables.drawables_of(self)
+
+    @property
+    def shapes(self) -> List[Shape]:
+        """Shapes and text boxes."""
+        return [d for d in self.drawables if isinstance(d, Shape)]
+
+    @property
+    def tables(self) -> List[Table]:
+        return [d for d in self.drawables if isinstance(d, Table)]
+
+    @property
+    def charts(self) -> List[Chart]:
+        return [d for d in self.drawables if isinstance(d, Chart)]
+
+    def _default_frame(self, width: Optional[float], height: Optional[float], x: Optional[float], y: Optional[float], w0: float, h0: float) -> Tuple[float, float, float, float]:
+        sw, sh = self.presentation.size
+        width = w0 if width is None else width
+        height = h0 if height is None else height
+        x = (sw - width) / 2 if x is None else x
+        y = (sh - height) / 2 if y is None else y
+        return float(x), float(y), float(width), float(height)
+
+    def add_shape(
+        self,
+        kind: str = "rectangle",
+        x: Optional[float] = None,
+        y: Optional[float] = None,
+        width: Optional[float] = None,
+        height: Optional[float] = None,
+        text: Union[None, str, Iterable[ParagraphInput]] = None,
+        fill: Optional[Color] = None,
+        style: int = 0,
+    ) -> Shape:
+        """Add a shape, in the middle of the slide unless ``x`` and ``y`` are given.
+
+        ``kind`` is one of :data:`pykeynote.drawables.SHAPE_KINDS`, such as
+        ``"rectangle"``, ``"rounded rectangle"``, ``"oval"``, ``"triangle"``,
+        ``"star"`` or ``"arrow"``. ``style`` picks one of the theme's six shape
+        styles (0 to 5); ``fill`` overrides its colour, e.g. ``"#3366ff"``.
+        Positions and sizes are in points from the slide's top left.
+        """
+        x, y, width, height = self._default_frame(width, height, x, y, 400, 300)
+        return _drawables.add_shape(self, kind, x, y, width, height, text=text, style=style, fill=fill)
+
+    def add_text_box(
+        self,
+        text: Union[str, Iterable[ParagraphInput]],
+        x: Optional[float] = None,
+        y: Optional[float] = None,
+        width: Optional[float] = None,
+        height: Optional[float] = None,
+    ) -> Shape:
+        """Add a text box in the theme's text box style."""
+        x, y, width, height = self._default_frame(width, height, x, y, 600, 80)
+        return _drawables.add_shape(self, "text box", x, y, width, height, text=text)
+
+    def add_chart(
+        self,
+        chart_type: str,
+        rows: Sequence[Sequence[Optional[float]]],
+        row_names: Sequence[str],
+        column_names: Sequence[str],
+        x: Optional[float] = None,
+        y: Optional[float] = None,
+        width: Optional[float] = None,
+        height: Optional[float] = None,
+        style: int = 0,
+        series_by: Optional[str] = None,
+        legend: Optional[bool] = None,
+    ) -> Chart:
+        """Add a chart of ``rows`` of values, one list per row name.
+
+        ``chart_type`` is one of :data:`pykeynote.charts.CHART_TYPES`:
+        ``"column"``, ``"bar"``, ``"line"``, ``"area"``, ``"pie"``,
+        ``"donut"``, their ``"stacked"`` forms or ``"scatter"``. Each row is a
+        data series unless ``series_by="column"``, which is the default for
+        pies and donuts: Keynote draws a pie from the first value of each
+        series, so the first row's values become the slices. Pies are kept
+        square. ``style`` picks one of the theme's six chart styles; the
+        legend shows when there is more than one series unless ``legend`` says.
+        """
+        x, y, width, height = self._default_frame(width, height, x, y, 900, 640)
+        return _charts.add_chart(
+            self, chart_type, rows, row_names, column_names, x, y, width, height, style=style, series_by=series_by, legend=legend
+        )
+
+    def add_table(
+        self,
+        rows: Sequence[Sequence[Any]],
+        x: Optional[float] = None,
+        y: Optional[float] = None,
+        width: Optional[float] = None,
+        height: Optional[float] = None,
+        header_rows: int = 1,
+        header_columns: int = 0,
+        style: int = 0,
+        name: Optional[str] = None,
+    ) -> Table:
+        """Add a table of ``rows``: lists of text, numbers, True/False or None for an empty cell.
+
+        The first ``header_rows`` rows (and ``header_columns`` columns) are
+        headers. ``style`` picks one of the theme's six table styles. The
+        table is centred unless ``x`` and ``y`` are given; each row is 64
+        points high unless ``height`` is given.
+        """
+        n_rows = len(rows)
+        n_cols = max((len(r) for r in rows), default=0)
+        sw, sh = self.size_of_slide
+        w = width if width is not None else min(sw - 120, 300.0 * max(n_cols, 1))
+        h = height if height is not None else 64.0 * max(n_rows, 1)
+        x = (sw - w) / 2 if x is None else x
+        y = (sh - h) / 2 if y is None else y
+        return _tables.add_table(self, rows, x, y, w, h, header_rows=header_rows, header_columns=header_columns, style=style, name=name)
+
+    @property
+    def size_of_slide(self) -> Tuple[int, int]:
+        return self.presentation.size
+
+    def delete_drawable(self, drawable: Drawable) -> None:
+        """Remove a shape, text box, table or chart from the slide."""
+        if drawable.slide._slide_id != self._slide_id:
+            raise ValueError("that drawable is on another slide")
+        if any(b.target == drawable.identifier for b in self.builds):
+            raise ValueError("remove the drawable's builds first (clear_builds)")
+        _drawables.delete_drawable(self, drawable)
 
     @property
     def images(self) -> List[Image]:
@@ -300,6 +438,7 @@ class Slide:
             "notes": self.notes,
             "skipped": self.skipped,
             "transition": {"effect": t.effect, "duration": t.duration, "delay": t.delay, "automatic": t.automatic},
+            "drawables": [d.to_dict() for d in self.drawables],
             "images": [
                 {
                     "position": list(i.position),
@@ -311,6 +450,46 @@ class Slide:
                 for i in self.images
             ],
         }
+
+
+def _unshare_drawables(original: "Slide", copy: "Slide") -> None:
+    """Give a duplicated slide its own copies of the original's tables and charts.
+
+    Copying a slide's file copies its shapes, but tables and charts keep
+    objects in other files, which the copy would otherwise share.
+    """
+    from .clone import Importer
+    from .drawables import add_external_reference, component_id_of, remove_external_reference
+
+    pairs = [(a, b) for a, b in zip(original.drawables, copy.drawables) if isinstance(a, (Table, Chart))]
+    if not pairs:
+        return
+    p = copy._package
+    importer = Importer(p, p)
+    s = copy._slide
+    for old, alias in pairs:
+        if isinstance(old, Table):
+            new = _tables.copy_table(importer, old.identifier, original._slide_id, copy)
+        else:
+            new = _charts.copy_chart(importer, old.identifier, original._slide_id, copy)
+        remap_references(s, {alias.identifier: new.identifier})  # drawables, z-order and the like
+        for build_ref in s.builds:
+            build = p.deref(build_ref)
+            if build.drawable.identifier == alias.identifier:
+                build.drawable.identifier = new.identifier
+                p.mark_changed(build_ref.identifier)
+        p.remove_object_reference(copy._slide_id, alias.identifier)
+        p.add_object_reference(copy._slide_id, new.identifier)
+        component = p.component(component_id_of(p, copy._slide_id))
+        remove_external_reference(p, component, alias.identifier)
+        add_external_reference(p, component, new.identifier)
+        if alias.identifier != old.identifier:
+            # The chart itself was copied with the slide's file: drop that copy and what only it owns.
+            from .clone import owned_objects, remove_objects
+
+            slide_file = p.file_of(copy._slide_id)
+            remove_objects(p, [i for i in owned_objects(p, alias.identifier, {copy._slide_id}) if p.file_of(i) == slide_file])
+    p.mark_changed(copy._slide_id)
 
 
 TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
@@ -421,6 +600,11 @@ class Presentation:
 
     def delete_slide(self, index: int) -> None:
         index = self._check_index(index)
+        slide = self.slides[index]
+        # Tables and charts keep objects outside the slide's own file; remove those first.
+        for drawable in slide.drawables:
+            if isinstance(drawable, (Table, Chart)):
+                _drawables.delete_drawable(slide, drawable)
         slides.delete_slide(self.package, self._show_id, self._tree_index(index))
 
     def duplicate_slide(self, index: int, to: Optional[int] = None) -> Slide:
@@ -434,7 +618,10 @@ class Presentation:
         visible = self._node_ids()
         tree_to = len(full) if to >= len(visible) else full.index(visible[to])
         slides.duplicate_slide(self.package, self._show_id, full.index(node_id), tree_to)
-        return self.slides[to]
+        copy = self.slides[to]
+        original = Slide(self, type(self._show.slideTree.slides[0])(identifier=node_id), -1)
+        _unshare_drawables(original, copy)
+        return copy
 
     def add_slide(
         self,
@@ -598,6 +785,9 @@ class Presentation:
         self._show_id = target._show_id
         self._show = target._show
         self._prototypes = target._prototypes
+
+    def _all_tables(self) -> List[Table]:
+        return [t for s in self.slides for t in s.tables]
 
     def to_markdown(self, image_dir: Optional[PathLike] = None) -> str:
         """The presentation as Markdown. With ``image_dir``, images are saved there and linked by that path."""

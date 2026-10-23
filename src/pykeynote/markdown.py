@@ -12,13 +12,17 @@ Each slide becomes a block, and blocks are separated by ``---``::
 
     A paragraph without a bullet
 
+    | Name | Score |
+    | --- | --- |
+    | Ada | 42 |
     ![A robot arm](images/arm.png)
     ![Logo](images/logo.png "1600,40 200x100")
 
     ???
     Presenter notes
 
-Slide settings go in HTML comments, so the Markdown still renders cleanly
+Tables are pipe tables; a ``| --- |`` line ends the header rows. Slide
+settings go in HTML comments, so the Markdown still renders cleanly
 elsewhere. Notes follow a line holding only ``???``, as in remark.js.
 
 An image fills the layout's next media placeholder, or, if its title gives
@@ -30,7 +34,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 from .text import Paragraph
 
@@ -116,6 +120,9 @@ def slide_to_markdown(slide: "Slide", image_dir: Optional[str] = None, _names: O
         lines.append("")
         lines.extend(body)
 
+    for table in slide.tables:
+        lines.append("")
+        lines.extend(table_to_markdown(table.rows, table.header_rows))
     images = _image_lines(slide, image_dir, _image_names(slide.presentation) if _names is None else _names)
     if images:
         lines.append("")
@@ -125,6 +132,33 @@ def slide_to_markdown(slide: "Slide", image_dir: Optional[str] = None, _names: O
     if notes:
         lines.extend(["", NOTES_MARKER, notes])
     return "\n".join(lines) + "\n"
+
+
+def _cell_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, float):
+        return f"{value:g}" if abs(value) < 1e15 else repr(value)
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value).replace("|", "\\|").replace("\n", "<br>")
+
+
+def table_to_markdown(rows: List[List[Any]], header_rows: int = 1) -> List[str]:
+    """A pipe table, one line per row. Header rows go above the ``---`` line; with none, it goes first."""
+    out = []
+    width = max(len(r) for r in rows)
+    separator = "| " + " | ".join(["---"] * width) + " |"
+    if header_rows == 0:
+        out.append("| " + " | ".join([""] * width) + " |")
+        out.append(separator)
+    for i, row in enumerate(rows):
+        out.append("| " + " | ".join(_cell_text(v) for v in row) + " |")
+        if i + 1 == header_rows:
+            out.append(separator)
+    return out
 
 
 def to_markdown(presentation: "Presentation", image_dir: Optional[str] = None) -> str:
@@ -165,6 +199,7 @@ class SlideSpec:
     transition_duration: Optional[float] = None
     skipped: bool = False
     builds: List[dict] = field(default_factory=list)
+    tables: List["TableSpec"] = field(default_factory=list)
     images: List[ImageSpec] = field(default_factory=list)
 
     def default_layout(self) -> str:
@@ -176,6 +211,8 @@ class SlideSpec:
             if self.title:
                 return "Title & Photo"
             return "Photo" if photos == 1 else "Photo - 3 Up"
+        if self.tables and not self.paragraphs:
+            return "Title Only" if self.title else "Blank"
         if self.title and self.paragraphs:
             return "Title & Bullets" if bulleted else "Title"
         if self.title:
@@ -183,6 +220,50 @@ class SlideSpec:
         if self.paragraphs:
             return "Bullets" if bulleted else "Statement"
         return "Blank"
+
+
+@dataclass
+class TableSpec:
+    rows: List[List[Any]]
+    header_rows: int = 0
+
+
+_TABLE_ROW = re.compile(r"^\s*\|.*\|\s*$")
+_TABLE_SEPARATOR = re.compile(r"^\s*\|(\s*:?-{3,}:?\s*\|)+\s*$")
+
+
+def _split_row(line: str) -> List[str]:
+    inner = line.strip()[1:-1]
+    cells = re.split(r"(?<!\\)\|", inner)
+    return [c.strip().replace("\\|", "|") for c in cells]
+
+
+def _cell_value(text: str) -> Any:
+    text = text.replace("<br>", "\n")
+    if text == "":
+        return None
+    if text in ("TRUE", "FALSE"):
+        return text == "TRUE"
+    if re.fullmatch(r"-?\d+", text):
+        return int(text)
+    if re.fullmatch(r"-?(\d+\.\d*|\.\d+|\d+)([eE][-+]?\d+)?", text):
+        return float(text)
+    return text
+
+
+def parse_table(lines: List[str]) -> TableSpec:
+    rows: List[List[Any]] = []
+    header_rows = 0
+    for line in lines:
+        if _TABLE_SEPARATOR.match(line):
+            header_rows = len(rows)
+            continue
+        rows.append([_cell_value(c) for c in _split_row(line)])
+    if header_rows and all(v is None for v in rows[0]) and header_rows == 1:
+        rows.pop(0)  # an empty header row stands for no header
+        header_rows = 0
+    width = max(len(r) for r in rows)
+    return TableSpec([r + [None] * (width - len(r)) for r in rows], header_rows)
 
 
 def _clean(text: str) -> str:
@@ -239,11 +320,15 @@ def parse_markdown(text: str) -> List[SlideSpec]:
         spec = SlideSpec()
         notes: Optional[List[str]] = None
         pending: List[str] = []  # lines of a plain paragraph being collected
+        table_lines: List[str] = []
 
         def flush() -> None:
             if pending:
                 spec.paragraphs.append(Paragraph(_clean(" ".join(s.strip() for s in pending)), 0, False))
                 pending.clear()
+            if table_lines:
+                spec.tables.append(parse_table(table_lines))
+                table_lines.clear()
 
         for line in block:
             stripped = line.strip()
@@ -279,6 +364,11 @@ def parse_markdown(text: str) -> List[SlideSpec]:
             if heading and spec.title is None and not spec.paragraphs and not pending:
                 spec.title = _clean(heading.group(1))
                 continue
+            if _TABLE_ROW.match(line) and not pending:
+                table_lines.append(line)
+                continue
+            if table_lines:
+                flush()
             bullet = _BULLET.match(line)
             if bullet:
                 flush()
@@ -330,6 +420,7 @@ def from_markdown(
             slide.set_transition(spec.transition, spec.transition_duration)
         if spec.skipped:
             slide.skipped = True
+        _place_tables(slide, spec)
         for image in spec.images:
             path = image.path
             if not re.match(r"^[a-z]+://", path) and not os.path.isabs(path):
@@ -343,3 +434,26 @@ def from_markdown(
         for build in spec.builds:
             slide.add_build(**build)
     return deck
+
+
+def _place_tables(slide: "Slide", spec: SlideSpec) -> None:
+    """Lay a slide's tables out side by side, below the title and any body text."""
+    if not spec.tables:
+        return
+    w, h = slide.presentation.size
+    margin = w * 0.05
+    top = h * (0.24 if spec.title is not None else 0.08)
+    if spec.paragraphs:
+        top = h * 0.55
+    gap = margin / 2
+    width = (w - 2 * margin - gap * (len(spec.tables) - 1)) / len(spec.tables)
+    for i, table in enumerate(spec.tables):
+        row_height = min(h * 0.06, (h - top - margin) / len(table.rows))
+        slide.add_table(
+            table.rows,
+            x=margin + i * (width + gap),
+            y=top,
+            width=width,
+            height=row_height * len(table.rows),
+            header_rows=table.header_rows,
+        )

@@ -96,7 +96,9 @@ def test_unchanged_save_is_identical(tmp_path, transitions):
 
 
 def test_to_dict(layouts):
-    assert layouts[3].to_dict() == {
+    d = layouts[3].to_dict()
+    assert [x["type"] for x in d.pop("drawables")] == ["text box"]
+    assert d == {
         "index": 3,
         "layout": "Title & Bullets",
         "title": "Title & Bullets",
