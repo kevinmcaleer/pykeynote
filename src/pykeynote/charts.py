@@ -43,6 +43,7 @@ CHART_TYPES = {
 _TYPE_NAMES = {v: k for k, v in CHART_TYPES.items()}
 _BY_ROW, _BY_COLUMN = 1, 2  # TSCH.SeriesDirection
 _LEGEND_GAP = 40.0  # points between the legend's bottom and the plot's top
+_AXIS_ROOM = 48.0  # Keynote draws axis labels outside the plot, to its left and below it
 
 # Which chart in the bundled parts deck to copy for each type.
 _DONOR_FOR = {
@@ -283,6 +284,9 @@ def add_chart(
         room = chart._chart.legend_frame.size.height + _LEGEND_GAP
         if height > 2 * room:
             y, height = y + room, height - room
+    if not round_chart and width > 3 * _AXIS_ROOM and height > 3 * _AXIS_ROOM:
+        # Leave room inside the box for the axis labels.
+        x, width, height = x + _AXIS_ROOM, width - _AXIS_ROOM, height - _AXIS_ROOM
     if round_chart:
         # Keynote keeps pies square; centre the square in the box.
         side = min(width, height)

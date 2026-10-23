@@ -119,7 +119,9 @@ pentagon, hexagon, octagon, star, arrow, double arrow and plus. Chart types
 are column, bar, line, area, their stacked forms, pie, donut and scatter.
 Each row of chart data is a series unless `series_by="column"`, which is the
 default for pies and donuts because Keynote draws a pie from the first value
-of each series.
+of each series (so a pie shows only its first row). The chart's box includes
+room for its legend, shown when there is more than one series, and its axis
+labels; `chart.position` and `chart.size` are the plot inside it.
 
 New tables and charts are copied from a small deck Keynote made, bundled
 with pykeynote, and take the look of your deck's theme. `slide.shapes`,

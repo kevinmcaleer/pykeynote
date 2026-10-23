@@ -148,7 +148,7 @@ def test_add_chart(tmp_path):
     (px, py), (pw, ph) = line.position, line.size
     legend = line._chart.legend_frame
     top = py + ph / 2 + legend.origin.y
-    assert px == 10 and pw == 500 and py + ph == 420
+    assert px > 10 and px + pw == 510 and py + ph < 420  # room for axis labels too
     assert 20 <= top < py
     assert pie.chart_type == "pie"
     assert pie.series_by == "column"  # so the first row's values are the slices
