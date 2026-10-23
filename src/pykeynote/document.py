@@ -5,9 +5,10 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, Iterable, List, Optional, Tuple, Union
+from typing import Any, Iterable, List, Optional, Sequence, Tuple, Union
 
 from . import builds as _builds
+from . import charts as _charts
 from . import drawables as _drawables
 from . import slides
 from .builds import Build
@@ -302,6 +303,30 @@ class Slide:
         """Add a text box in the theme's text box style."""
         x, y, width, height = self._default_frame(width, height, x, y, 600, 80)
         return _drawables.add_shape(self, "text box", x, y, width, height, text=text)
+
+    def add_chart(
+        self,
+        chart_type: str,
+        rows: Sequence[Sequence[Optional[float]]],
+        row_names: Sequence[str],
+        column_names: Sequence[str],
+        x: Optional[float] = None,
+        y: Optional[float] = None,
+        width: Optional[float] = None,
+        height: Optional[float] = None,
+        style: int = 0,
+        series_by: str = "row",
+    ) -> Chart:
+        """Add a chart of ``rows`` of values, one list per row name.
+
+        ``chart_type`` is one of :data:`pykeynote.charts.CHART_TYPES`:
+        ``"column"``, ``"bar"``, ``"line"``, ``"area"``, ``"pie"``,
+        ``"donut"``, their ``"stacked"`` forms or ``"scatter"``. Each row is a
+        data series unless ``series_by="column"``. ``style`` picks one of the
+        theme's six chart styles.
+        """
+        x, y, width, height = self._default_frame(width, height, x, y, 900, 640)
+        return _charts.add_chart(self, chart_type, rows, row_names, column_names, x, y, width, height, style=style, series_by=series_by)
 
     def delete_drawable(self, drawable: Drawable) -> None:
         """Remove a shape, text box, table or chart from the slide."""

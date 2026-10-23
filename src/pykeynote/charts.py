@@ -14,10 +14,13 @@ of the target deck's theme.
 
 from __future__ import annotations
 
+import os
+import re
 import uuid as uuidlib
 from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Union
 
-from .drawables import Drawable
+from .drawables import Drawable, place_on_slide
+from .package import Package
 
 if TYPE_CHECKING:
     from .document import Slide
@@ -158,3 +161,70 @@ class Chart(Drawable):
             data=self.data,
         )
         return d
+
+
+PARTS_DECK = os.path.join(os.path.dirname(__file__), "templates", "parts", "basic-white-parts.key")
+_parts: Optional[Package] = None
+
+
+def parts_package() -> Package:
+    """The bundled deck that new charts and tables are copied from. Never saved."""
+    global _parts
+    if _parts is None:
+        _parts = Package.open(PARTS_DECK)
+    return _parts
+
+
+def _donor_chart(donor: Package, chart_type: str) -> Any:
+    from .clone import theme_presets
+
+    want = CHART_TYPES[_DONOR_FOR[chart_type]]
+    for identifier, obj in donor.objects("TSCH.ChartDrawableArchive"):
+        c = _chart_ext(obj)
+        name = c.DESCRIPTOR.fields_by_name["chart_type"].enum_type.values_by_number[c.chart_type].name
+        if name == want:
+            preset_index = theme_presets(donor)["chart_presets"].index(c.preset.identifier)
+            return identifier, obj.super.parent.identifier, preset_index
+    raise ValueError(f"no {chart_type} chart to copy from")
+
+
+def add_chart(
+    slide: "Slide",
+    chart_type: str,
+    rows: Sequence[Sequence[Optional[Number]]],
+    row_names: Sequence[str],
+    column_names: Sequence[str],
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+    style: int = 0,
+    series_by: str = "row",
+) -> Chart:
+    from .clone import Importer, theme_presets
+
+    if chart_type not in CHART_TYPES:
+        raise ValueError(f"chart type must be one of {', '.join(CHART_TYPES)}, not {chart_type!r}")
+    if width <= 0 or height <= 0:
+        raise ValueError("width and height must be more than 0")
+    p = slide._package
+    presets = theme_presets(p).get("chart_presets", [])
+    if not 0 <= style < len(presets):
+        raise ValueError(f"style must be 0 to {len(presets) - 1}, one of the theme's chart styles")
+    donor = parts_package()
+    root, donor_slide, donor_style = _donor_chart(donor, chart_type)
+
+    def rename(name: str) -> str:
+        return re.sub(rf"^chart-{donor_style}-", f"chart-{style}-", name)
+
+    importer = Importer(donor, p, rename=rename, presets={theme_presets(donor)["chart_presets"][donor_style]: presets[style]})
+    id_map = importer.copy_drawable(root, donor_slide, slide._slide_id)
+    chart = Chart(slide, id_map[root])
+    g = chart._info.geometry
+    g.position.x, g.position.y = float(x), float(y)
+    g.size.width, g.size.height = float(width), float(height)
+    chart.chart_type = chart_type
+    chart.series_by = series_by
+    chart.set_data(rows, row_names, column_names)
+    place_on_slide(slide, chart.identifier)
+    return chart

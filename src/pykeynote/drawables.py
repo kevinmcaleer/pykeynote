@@ -298,14 +298,20 @@ SHAPE_KINDS = (
     "diamond",
     "pentagon",
     "hexagon",
+    "octagon",
     "star",
     "arrow",
     "double arrow",
-    "chevron",
     "plus",
 )
 
-_POLYGON_SIDES = {"triangle": 3, "diamond": 4, "pentagon": 5, "hexagon": 6}
+# Keynote draws its triangle and diamond as paths, other polygons from a number of sides.
+_POLYGON_SIDES = {"pentagon": 5, "hexagon": 6, "octagon": 8}
+_PATHS = {
+    "rectangle": [(0, 0), (1, 0), (1, 1), (0, 1)],
+    "triangle": [(0.5, 0), (1, 1), (0, 1)],
+    "diamond": [(0, 0.5), (0.5, 1), (1, 0.5), (0.5, 0)],
+}
 _POINT_TYPES = {"arrow": 1, "left arrow": 0, "double arrow": 10, "star": 100, "plus": 200}
 
 
@@ -314,7 +320,7 @@ def _path_source(kind: str, width: float, height: float) -> Any:
     ps = new_archive("TSD.PathSourceArchive")
     ps.horizontalFlip = False
     ps.verticalFlip = False
-    if kind in ("rectangle", "oval"):
+    if kind in _PATHS or kind == "oval":
         b = ps.bezier_path_source
         b.naturalSize.width, b.naturalSize.height = width, height
         _bezier(b.path, kind, width, height)
@@ -329,11 +335,7 @@ def _path_source(kind: str, width: float, height: float) -> Any:
         s.type = s.kTSDRegularPolygon
         s.scalar = _POLYGON_SIDES[kind]
         s.naturalSize.width, s.naturalSize.height = width, height
-    elif kind == "chevron":
-        s = ps.scalar_path_source
-        s.type = s.kTSDChevron
-        s.scalar = min(width, height) * 0.5
-        s.naturalSize.width, s.naturalSize.height = width, height
+        s.is_curve_continuous = False
     elif kind in _POINT_TYPES:
         p = ps.point_path_source
         p.type = _POINT_TYPES[kind]
@@ -358,13 +360,14 @@ def _bezier(path: Any, kind: str, w: float, h: float) -> None:
             pt.x, pt.y = x, y
 
     MOVE, LINE, CURVE, CLOSE = 1, 2, 4, 5
-    if kind == "rectangle":
-        add(MOVE, (0, 0))
-        add(LINE, (w, 0))
-        add(LINE, (w, h))
-        add(LINE, (0, h))
+    if kind in _PATHS:
+        # Closed, then a move back to the start, as Keynote writes them.
+        points = [(x * w, y * h) for x, y in _PATHS[kind]]
+        add(MOVE, points[0])
+        for pt in points[1:]:
+            add(LINE, pt)
         add(CLOSE)
-        add(MOVE, (0, 0))
+        add(MOVE, points[0])
         return
     # An ellipse as four cubic curves.
     k = 4 * (math.sqrt(2) - 1) / 3
@@ -385,20 +388,43 @@ def _kind_of_path(ps: Any) -> str:
         if s.type == s.kTSDChevron:
             return "chevron"
         sides = {v: k for k, v in _POLYGON_SIDES.items()}
+        sides.update({3: "triangle", 4: "diamond"})
         return sides.get(int(round(s.scalar)), "polygon")
     if ps.HasField("point_path_source"):
         names = {v: k for k, v in _POINT_TYPES.items()}
         return names.get(ps.point_path_source.type, "shape")
     if ps.HasField("bezier_path_source"):
-        types = [e.type for e in ps.bezier_path_source.path.elements]
-        if 4 in types and types.count(4) == 4 and 2 not in types:
+        b = ps.bezier_path_source
+        elements = list(b.path.elements)
+        types = [e.type for e in elements]
+        if types.count(4) == 4 and 2 not in types:
             return "oval"
-        if types.count(2) == 3 and 4 not in types and 3 not in types:
-            return "rectangle"
+        if 3 not in types and 4 not in types and types.count(1) <= 2:
+            w, h = b.naturalSize.width or 1, b.naturalSize.height or 1
+            outline = []
+            for e in elements:
+                if e.type == 5:
+                    break
+                outline.extend((round(pt.x / w, 3), round(pt.y / h, 3)) for pt in e.points)
+            for name, points in _PATHS.items():
+                if _same_polygon(outline, points):
+                    return name
         return "custom"
     if ps.HasField("callout_path_source"):
         return "callout"
     return "shape"
+
+
+def _same_polygon(outline: List[Tuple[float, float]], points: List[Tuple[float, float]]) -> bool:
+    """Whether ``outline`` visits the same corners as ``points``, from any start and in either direction."""
+    if len(outline) != len(points):
+        return False
+    n = len(points)
+    for start in range(n):
+        for step in (1, -1):
+            if all(abs(outline[i][0] - points[(start + step * i) % n][0]) < 0.01 and abs(outline[i][1] - points[(start + step * i) % n][1]) < 0.01 for i in range(n)):
+                return True
+    return False
 
 
 def _resize_path(ps: Any, width: float, height: float) -> None:
