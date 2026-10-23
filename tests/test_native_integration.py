@@ -192,3 +192,27 @@ def test_images_survive_keynote(tmp_path, open_in_keynote):
     assert square.position == pytest.approx((100, 100)) and square.size == pytest.approx((400, 400))
     assert square.description == "A blue square"
     assert sorted((i.placeholder, i.is_sample) for i in again[2].images) == [("Media", False), ("Media-1", True)]
+
+
+@pytest.mark.parametrize("aspect", ["16:9", "4:3"])
+def test_every_theme_opens_in_keynote(tmp_path, open_in_keynote, aspect):
+    from pykeynote import from_markdown, themes
+
+    for theme in themes():
+        out = tmp_path / f"{theme}-{aspect.replace(':', 'x')}.key"
+        from_markdown(MARKDOWN, theme=theme, aspect=aspect).save(out)
+        live = open_in_keynote(out)
+        assert [s["title"] for s in live.read_slides()][:2] == ["Robots!", "Why robots?"]
+
+
+def test_switched_theme_opens_in_keynote(tmp_path, open_in_keynote):
+    from pykeynote import themes
+
+    deck = Presentation.open(FIXTURES / "builds-talk.key")
+    theme = next(t for t in themes() if t != deck.theme)
+    deck.apply_theme(theme)
+    out = tmp_path / "switched.key"
+    deck.save(out)
+    live = open_in_keynote(out)
+    assert live.theme == theme
+    assert [s["title"] for s in live.read_slides()] == ["Why robots? 🤖", "Robots!"]

@@ -9,6 +9,7 @@ export {
   Slide,
   themes,
   type AddSlideOptions,
+  type ApplyThemeOptions,
   type Aspect,
   type CreateOptions,
   type Transition,

@@ -246,3 +246,16 @@ def test_markdown_without_image_dir_and_escaping():
     statement = Presentation.new()
     statement.add_slide("Statement", body="![not an image](x.png)")
     assert parse_markdown(statement.to_markdown())[0].images == []
+
+
+def test_markdown_images_in_every_theme(tmp_path):
+    from pykeynote import themes
+
+    (tmp_path / "parts").mkdir()
+    (tmp_path / "red.png").write_bytes(png(160, 90))
+    (tmp_path / "parts" / "wiring.png").write_bytes(png(90, 160, (0, 0, 255)))
+    for theme in themes():
+        deck = from_markdown(MARKDOWN, theme=theme, base_dir=str(tmp_path))
+        assert [len(s.images) for s in deck] == [1, 2, 2], theme
+        assert not any(i.is_sample for s in deck for i in s.images)
+        check_consistent(reopen(deck, tmp_path))
