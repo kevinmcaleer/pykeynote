@@ -23,6 +23,9 @@ classifiers = [
     "Topic :: Office/Business",
 ]
 
+[project.scripts]
+pykeynote = "pykeynote.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/kevinmcaleer/pykeynote"
 Source = "https://github.com/kevinmcaleer/pykeynote"

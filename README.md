@@ -73,6 +73,32 @@ deck = from_markdown(open("talk.md").read())
 deck.save("from-markdown.key")
 ```
 
+## Images
+
+```python
+deck = Presentation.new()
+slide = deck.add_slide("Title & Photo", title="Meet the robot")
+slide.add_image("robot.jpg", description="A small wheeled robot")  # fills the photo placeholder
+
+slide = deck.add_slide("Blank")
+slide.add_image("logo.png", position=(1600, 40), size=(200, None))  # top right, 200 pt wide
+
+for image in slide.images:      # back to front
+    print(image.position, image.size, image.pixel_size, image.description, image.filename)
+    open(image.name, "wb").write(image.data)
+
+slide.replace_image(0, "new-logo.png")   # by index, Image, or placeholder tag such as "Media"
+slide.remove_image(0)
+```
+
+`add_image` takes a path or bytes, as PNG, JPEG or GIF. With no position or
+size it fills the slide's first media placeholder, cropping the picture to it
+as Keynote does; otherwise the image goes on top, centred if no position is
+given. A placeholder still showing the theme's sample photo has
+`is_sample == True` and no `data`, because Keynote keeps those photos outside
+the file. `slide.placeholders` lists the layout's placeholders in reading
+order. Images can have builds too: `slide.add_build(image.identifier, "dissolve")`.
+
 `add_slide` copies a slide that already uses the layout, so it keeps the
 theme's look. A deck from `Presentation.new()` has one of every layout to
 copy from, kept out of sight and left out when you save. For a deck you
@@ -131,7 +157,10 @@ get their own copies.
 
 ## Themes
 
-`pykeynote.themes()` lists the bundled themes, each at 16:9 and 4:3. Start a
+`pykeynote.themes()` lists the bundled themes, each at 16:9 and 4:3. They are
+Basic White, Basic Black, Basic Color, Classic White, Color Gradient,
+Minimalist Light, Minimalist Dark and Briefing (Keynote spells two of them
+"Colour"; use the US spelling here). Start a
 deck in one, or switch an existing deck to another:
 
 ```python
@@ -183,6 +212,85 @@ Tables are pipe tables both ways; the rows above the `| --- |` line are
 header rows. A slide with a title and a table but no bullets gets the
 "Title Only" layout.
 
+Images use Markdown's own syntax. One without a title fills the layout's
+next photo placeholder; a title of `"x,y widthxheight"` puts it at that spot
+instead. A slide with images and no `layout` comment gets a photo layout,
+and `from_markdown` removes any placeholder left without a picture.
+`to_markdown(image_dir="talk-images")` saves the pictures and links them
+from there; image paths in `from_markdown` are relative to `base_dir`.
+
+```markdown
+# Meet the robot
+
+![A small wheeled robot](talk-images/robot.jpg)
+![Logo](talk-images/logo.png "1600,40 200x100")
+```
+
+## Command line
+
+Installing pykeynote adds a `pykeynote` command. Add `--json` to any
+command to get machine-readable output for scripts and LLM agents.
+
+```sh
+pykeynote new talk.key -m talk.md          # Markdown to .key (-m - reads stdin)
+pykeynote info talk.key                    # theme, size, layouts, slide list
+pykeynote show talk.key 1                  # one slide: text, notes, transition, builds
+pykeynote export talk.key -o talk.md       # .key to Markdown
+pykeynote edit talk.key 1 --title "Why robots?" --body "They're fun" --body "  Mostly" --notes "Short"
+pykeynote edit talk.key 1 --transition dissolve --duration 1.5 --skip no
+pykeynote add talk.key --layout "Title & Bullets" --title "One more" --at 2
+pykeynote duplicate talk.key 1
+pykeynote move talk.key 3 0
+pykeynote delete talk.key -1
+pykeynote build talk.key 1 --target body --effect dissolve
+pykeynote theme talk.key "Basic Black" --layout Quote=Statement
+pykeynote themes
+```
+
+Slide indexes start at 0, and negative ones count from the end. Each
+`--body` is one paragraph; two leading spaces indent it one level. Editing
+commands save the deck in place unless you pass `-o other.key`. pykeynote
+only writes `.key` files.
+
+## Using it from Claude (MCP)
+
+`pykeynote mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io)
+server over stdio, so Claude and other MCP clients can read and edit decks.
+It has no extra dependencies, and needs a pykeynote release newer than 0.2.0.
+Its tools are `list_themes`, `deck_info`,
+`read_slide`, `export_markdown`, `create_deck`, `edit_slide`, `add_slide`,
+`delete_slide`, `move_slide`, `duplicate_slide`, `apply_theme`, `add_build` and
+`clear_builds`. Editing tools save the deck when they finish, or write a copy
+when given `output`.
+
+For Claude Code:
+
+```sh
+claude mcp add keynote -- uvx --from pykeynote pykeynote mcp
+# or, with pykeynote installed already:
+claude mcp add keynote -- pykeynote mcp
+```
+
+For Claude Desktop, add this to `claude_desktop_config.json`
+(Settings > Developer > Edit Config) and restart it:
+
+```json
+{
+  "mcpServers": {
+    "keynote": {
+      "command": "uvx",
+      "args": ["--from", "pykeynote", "pykeynote", "mcp"]
+    }
+  }
+}
+```
+
+If you installed with pip instead of using `uvx`, set `"command"` to the full
+path that `which pykeynote` prints and `"args"` to `["mcp"]`. Give Claude
+absolute paths to decks, since the server's working directory isn't yours.
+Then ask something like "Make a five-slide deck about robot arms in
+~/Desktop/arms.key" or "Tighten the bullets on slide 3 of ~/Desktop/talk.key".
+
 ## Roadmap
 
 1. Read decks and export Markdown. **Done.**
@@ -190,7 +298,9 @@ header rows. A slide with a title and a table but no bullets gets the
 3. Add, duplicate, delete and reorder slides, set transitions and skipping, and build decks from Markdown. **Done.**
 4. Build animations on titles and bodies. **Done.**
 5. More bundled themes and switching a deck's theme. **Done.**
-6. Shapes, text boxes, tables and charts, with builds on them and tables in Markdown. **Done.** Next: images.
+6. A command line tool and an MCP server for LLMs. **Done.**
+7. Images: read, add, fill placeholders, replace and remove, with Markdown support. **Done.** Next: video and audio, images in the CLI and MCP tools, and builds on other shapes.
+8. Shapes, text boxes, tables and charts, with builds on them and tables in Markdown. **Done.**
 
 ## Driving Keynote directly (legacy)
 

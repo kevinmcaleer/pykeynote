@@ -225,6 +225,31 @@ def clear_builds(slide: "Slide") -> None:
     _builds_changed(slide)
 
 
+def remove_builds_for(slide: "Slide", drawable_id: int) -> None:
+    """Remove the builds that animate one drawable, for when it is deleted."""
+    p = slide._package
+    s = slide._slide
+    builds = {r.identifier for r in s.builds if p.deref(r).drawable.identifier == drawable_id}
+    if not builds:
+        return
+    chunks = {r.identifier for r in s.buildChunks if p.deref(r).build.identifier in builds}
+    gone = builds | chunks
+    for identifier in gone:
+        p.remove_segment(identifier)
+        p.remove_object_reference(slide._slide_id, identifier)
+    for field in ("builds", "buildChunks"):
+        kept = [r.identifier for r in getattr(s, field) if r.identifier not in gone]
+        del getattr(s, field)[:]
+        for identifier in kept:
+            getattr(s, field).add().identifier = identifier
+    component = p.component_for_file(p.file_of(slide._slide_id))
+    kept_entries = [e for e in component.object_uuid_map_entries if e.identifier not in gone]
+    del component.object_uuid_map_entries[:]
+    for e in kept_entries:
+        component.object_uuid_map_entries.add().CopyFrom(e)
+    _builds_changed(slide)
+
+
 def _builds_changed(slide: "Slide") -> None:
     p = slide._package
     node = slide._node

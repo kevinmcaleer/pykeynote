@@ -11,10 +11,12 @@ from . import builds as _builds
 from . import charts as _charts
 from . import tables as _tables
 from . import drawables as _drawables
+from . import media as _media
 from . import slides
 from .builds import Build
 from .charts import Chart
 from .drawables import Color, Drawable, Shape
+from .media import Image, ImageSource
 from .tables import Table
 from .package import Package, PathLike, remap_references
 from .text import Paragraph, ParagraphInput, Text
@@ -375,6 +377,57 @@ class Slide:
             raise ValueError("remove the drawable's builds first (clear_builds)")
         _drawables.delete_drawable(self, drawable)
 
+    @property
+    def images(self) -> List[Image]:
+        """The slide's images, back to front, including media placeholders."""
+        return _media.read_images(self)
+
+    @property
+    def placeholders(self) -> List[Image]:
+        """The layout's media placeholders on this slide, left to right and top to bottom."""
+        return _media.placeholders(self)
+
+    def add_image(
+        self,
+        source: ImageSource,
+        position: Optional[Tuple[float, float]] = None,
+        size: Optional[Tuple[Optional[float], Optional[float]]] = None,
+        description: Optional[str] = None,
+        placeholder: Union[None, bool, str] = None,
+        name: Optional[str] = None,
+    ) -> Image:
+        """Add a PNG, JPEG or GIF image, from a file path or bytes.
+
+        With no ``position`` or ``size``, the image fills the slide's first
+        media placeholder that still shows the theme's sample photo, cropped
+        to it as Keynote does. Otherwise, or with ``placeholder=False``, it
+        goes on top of everything else: at ``position`` (top left, in
+        points), ``size`` wide and high (give one as ``None`` to keep the
+        picture's shape), and centred if no position is given.
+        ``placeholder`` can also name a placeholder, e.g. ``"Media-2"``.
+        ``description`` is the accessibility description (alt text).
+        ``name`` is the file name to store bytes under.
+        """
+        return _media.add_image(self, source, position, size, description, placeholder, name)
+
+    def replace_image(
+        self,
+        image: Union[Image, int, str],
+        source: ImageSource,
+        description: Optional[str] = None,
+        name: Optional[str] = None,
+    ) -> Image:
+        """Put a new picture in place of ``image``: an :class:`Image`, its index in :attr:`images`, or a placeholder tag.
+
+        A cropped image (such as a placeholder) keeps its crop, with the new
+        picture scaled to cover it. Otherwise the picture fits inside the old one's frame.
+        """
+        return _media.replace_image(self, image, source, description, name)
+
+    def remove_image(self, image: Union[Image, int, str]) -> None:
+        """Delete an image, and any builds on it."""
+        _media.remove_image(self, image)
+
     def to_dict(self) -> dict:
         t = self.transition
         return {
@@ -386,6 +439,16 @@ class Slide:
             "skipped": self.skipped,
             "transition": {"effect": t.effect, "duration": t.duration, "delay": t.delay, "automatic": t.automatic},
             "drawables": [d.to_dict() for d in self.drawables],
+            "images": [
+                {
+                    "position": list(i.position),
+                    "size": list(i.size),
+                    "description": i.description,
+                    "placeholder": i.placeholder,
+                    "filename": i.filename,
+                }
+                for i in self.images
+            ],
         }
 
 
@@ -726,10 +789,11 @@ class Presentation:
     def _all_tables(self) -> List[Table]:
         return [t for s in self.slides for t in s.tables]
 
-    def to_markdown(self) -> str:
+    def to_markdown(self, image_dir: Optional[PathLike] = None) -> str:
+        """The presentation as Markdown. With ``image_dir``, images are saved there and linked by that path."""
         from .markdown import to_markdown
 
-        return to_markdown(self)
+        return to_markdown(self, None if image_dir is None else os.fspath(image_dir))
 
     def save(self, path: Optional[PathLike] = None) -> None:
         """Write the presentation as a ``.key`` file, to ``path`` or back where it came from."""

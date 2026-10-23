@@ -106,4 +106,5 @@ def test_to_dict(layouts):
         "notes": "Notes for Title & Bullets",
         "skipped": False,
         "transition": {"effect": None, "duration": 1.0, "delay": 0.5, "automatic": False},
+        "images": [],
     }

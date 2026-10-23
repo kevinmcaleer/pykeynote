@@ -82,7 +82,10 @@ Without the file system, use `Presentation.fromBytes(bytes)` and
 
 ## Themes
 
-`themes()` lists the bundled themes, each at 16:9 and 4:3. Start a deck in
+`themes()` lists the bundled themes, each at 16:9 and 4:3. They are
+Basic White, Basic Black, Basic Color, Classic White, Color Gradient,
+Minimalist Light, Minimalist Dark and Briefing (Keynote spells two of them
+"Colour"; use the US spelling here). Start a deck in
 one, or switch an existing deck to another:
 
 ```ts
