@@ -1,6 +1,6 @@
 {
   "name": "@kevsmac/keynotejs",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Create, read and edit Apple Keynote presentations from JavaScript and TypeScript, without Keynote",
   "type": "module",
   "main": "./dist/index.js",
