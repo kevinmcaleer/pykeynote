@@ -12,8 +12,10 @@ files saved by Keynote up to 14.5.
 ## Install
 
 ```sh
-pip install -e ".[dev]"
+pip install pykeynote
 ```
+
+For development, clone the repo and run `pip install -e ".[dev]"`.
 
 ## Reading a deck
 
