@@ -73,3 +73,66 @@ def test_resaved_by_keynote_reads_back(tmp_path, open_in_keynote):
     again = Presentation.open(resaved)
     assert again[0].body == "One\nTwo\nThree"
     assert again[0].transition.effect == "dissolve"
+
+
+MARKDOWN = """# Robots!
+
+Kevin McAleer
+
+---
+
+<!-- transition: dissolve 1.5s -->
+# Why robots?
+
+- Fun 🤖
+  - Mostly
+- Useful
+
+???
+Keep it short.
+
+---
+
+<!-- layout: Quote -->
+Any sufficiently advanced robot is indistinguishable from a cat.
+
+---
+
+<!-- transition: magic move 1s -->
+<!-- skipped -->
+# Thanks
+"""
+
+
+def test_deck_from_markdown_opens_in_keynote(tmp_path, open_in_keynote):
+    from pykeynote import from_markdown
+
+    out = tmp_path / "from-markdown.key"
+    from_markdown(MARKDOWN).save(out)
+
+    live = open_in_keynote(out)
+    rows = live.read_slides()
+    assert [r["layout"] for r in rows] == ["Title", "Title & Bullets", "Quote", "Title Only"]
+    assert rows[0]["title"] == "Robots!"
+    assert rows[1]["body"].replace("\r", "\n").split("\n") == ["Fun 🤖", "Mostly", "Useful"]
+    assert rows[1]["notes"] == "Keep it short."
+    assert rows[3]["skipped"] is True
+
+    resaved = tmp_path / "resaved.key"
+    live.save(resaved)
+    again = Presentation.open(resaved)
+    assert again.to_markdown() == Presentation.open(out).to_markdown()
+
+
+def test_slide_operations_open_in_keynote(tmp_path, open_in_keynote):
+    deck = Presentation.open(FIXTURES / "layouts-basic-white.key")
+    deck.duplicate_slide(3).title = "Copy"
+    deck.move_slide(4, 0)
+    deck.delete_slide(-1)
+    deck.delete_slide(5)
+    out = tmp_path / "ops.key"
+    deck.save(out)
+    expected = [s.title for s in Presentation.open(out)]
+
+    live = open_in_keynote(out)
+    assert [r["title"] for r in live.read_slides()] == expected

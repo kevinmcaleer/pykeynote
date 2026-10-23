@@ -21,7 +21,10 @@ elsewhere. Notes follow a line holding only ``???``, as in remark.js.
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, List
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, List, Optional
+
+from .text import Paragraph
 
 if TYPE_CHECKING:
     from .document import Presentation, Slide
@@ -71,3 +74,140 @@ def slide_to_markdown(slide: "Slide") -> str:
 
 def to_markdown(presentation: "Presentation") -> str:
     return f"\n{SLIDE_SEPARATOR}\n\n".join(slide_to_markdown(s) for s in presentation.slides)
+
+
+# --- Markdown to a presentation -------------------------------------------------
+
+_COMMENT = re.compile(r"^<!--\s*(.*?)\s*-->$")
+_HEADING = re.compile(r"^#{1,2}\s+(.*)$")
+_BULLET = re.compile(r"^(\s*)(?:[-*+]|\d+[.)])\s+(.*)$")
+_TRANSITION = re.compile(r"^(.*?)(?:\s+([\d.]+)\s*s)?$")
+
+
+@dataclass
+class SlideSpec:
+    """One slide parsed from Markdown, before it is added to a deck."""
+
+    layout: Optional[str] = None
+    title: Optional[str] = None
+    paragraphs: List[Paragraph] = field(default_factory=list)
+    notes: str = ""
+    transition: Optional[str] = None
+    transition_duration: Optional[float] = None
+    skipped: bool = False
+
+    def default_layout(self) -> str:
+        bulleted = any(p.bulleted for p in self.paragraphs)
+        if self.title and self.paragraphs:
+            return "Title & Bullets" if bulleted else "Title"
+        if self.title:
+            return "Title Only"
+        if self.paragraphs:
+            return "Bullets" if bulleted else "Statement"
+        return "Blank"
+
+
+def _clean(text: str) -> str:
+    text = text.strip().replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n")
+    return text[1:] if text.startswith("\\") else text
+
+
+def parse_markdown(text: str) -> List[SlideSpec]:
+    """Split Markdown in the :func:`to_markdown` format into slide specs."""
+    blocks: List[List[str]] = [[]]
+    in_fence = False
+    for line in text.splitlines():
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+        if not in_fence and line.strip() == SLIDE_SEPARATOR:
+            blocks.append([])
+        else:
+            blocks[-1].append(line)
+
+    specs = []
+    for block in blocks:
+        if not any(line.strip() for line in block):
+            continue
+        spec = SlideSpec()
+        notes: Optional[List[str]] = None
+        pending: List[str] = []  # lines of a plain paragraph being collected
+
+        def flush() -> None:
+            if pending:
+                spec.paragraphs.append(Paragraph(_clean(" ".join(s.strip() for s in pending)), 0, False))
+                pending.clear()
+
+        for line in block:
+            stripped = line.strip()
+            if notes is not None:
+                notes.append(line)
+                continue
+            if stripped == NOTES_MARKER:
+                flush()
+                notes = []
+                continue
+            comment = _COMMENT.match(stripped)
+            if comment:
+                flush()
+                key, _, value = comment.group(1).partition(":")
+                key, value = key.strip().lower(), value.strip()
+                if key == "layout":
+                    spec.layout = value
+                elif key == "transition":
+                    m = _TRANSITION.match(value)
+                    spec.transition = m.group(1).strip()
+                    spec.transition_duration = float(m.group(2)) if m.group(2) else None
+                elif key == "skipped":
+                    spec.skipped = value.lower() not in ("false", "no", "0")
+                continue
+            heading = _HEADING.match(stripped)
+            if heading and spec.title is None and not spec.paragraphs and not pending:
+                spec.title = _clean(heading.group(1))
+                continue
+            bullet = _BULLET.match(line)
+            if bullet:
+                flush()
+                indent = len(bullet.group(1).expandtabs(4))
+                spec.paragraphs.append(Paragraph(_clean(bullet.group(2)), indent // 2, True))
+                continue
+            if not stripped:
+                flush()
+                continue
+            pending.append(line)
+        flush()
+        if notes is not None:
+            spec.notes = "\n".join(notes).strip()
+        specs.append(spec)
+    return specs
+
+
+def from_markdown(text: str, theme: str = "Basic White") -> "Presentation":
+    """Build a new presentation from Markdown in the :func:`to_markdown` format.
+
+    A slide without a ``layout`` comment gets one from its content: title and
+    bullets give "Title & Bullets", a title alone "Title Only", and so on.
+    """
+    from .document import Presentation
+
+    deck = Presentation.new(theme)
+    available = set(deck.layouts)
+    for spec in parse_markdown(text):
+        layout = spec.layout or spec.default_layout()
+        if layout not in available:
+            layout = "Title & Bullets"
+        slide = deck.add_slide(layout)
+        if spec.title is not None:
+            if slide.title is None:
+                raise ValueError(f"the {layout!r} layout doesn't show a title, for {spec.title!r}")
+            slide.title = spec.title
+        if spec.paragraphs:
+            if slide.body is None:
+                raise ValueError(f"the {layout!r} layout doesn't show a body, for {spec.paragraphs[0].text!r}")
+            slide.body = spec.paragraphs
+        if spec.notes:
+            slide.notes = spec.notes
+        if spec.transition:
+            slide.set_transition(spec.transition, spec.transition_duration)
+        if spec.skipped:
+            slide.skipped = True
+    return deck
