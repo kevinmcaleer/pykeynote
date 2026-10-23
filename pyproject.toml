@@ -1,19 +1,38 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
 name = "pykeynote"
-version = "0.2.0"
+dynamic = ["version"]
 description = "Create, read and edit Apple Keynote presentations from Python"
 readme = "README.md"
 dependencies = ["keynote-parser>=1.14.5,<2"]
 requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Kevin McAleer" }]
+keywords = ["keynote", "apple", "presentation", "slides", "markdown", "iwork"]
 classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Multimedia :: Graphics :: Presentation",
+    "Topic :: Office/Business",
 ]
+
+[project.urls]
+Homepage = "https://github.com/kevinmcaleer/pykeynote"
+Source = "https://github.com/kevinmcaleer/pykeynote"
+Issues = "https://github.com/kevinmcaleer/pykeynote/issues"
+
+[tool.hatch.version]
+path = "src/pykeynote/__init__.py"
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "README.md", "LICENSE"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
