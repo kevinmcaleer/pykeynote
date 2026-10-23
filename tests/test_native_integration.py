@@ -164,3 +164,31 @@ def test_builds_survive_keynote(tmp_path, open_in_keynote):
         ("title", "move in", "All at Once", 1),
         ("body", "dissolve", "By Paragraph", 3),
     ]
+
+
+def test_images_survive_keynote(tmp_path, open_in_keynote):
+    from test_media import png
+
+    deck = Presentation.new()
+    photo = deck.add_slide("Title & Photo", title="Placeholder photo")
+    photo.add_image(png(1600, 900), description="A red picture")
+    free = deck.add_slide("Blank")
+    free.add_image(png(800, 800, (0, 0, 200)), position=(100, 100), size=(400, None), description="A blue square")
+    three = deck.add_slide("Photo - 3 Up")
+    three.add_image(png(300, 200, (0, 160, 0)))
+    three.remove_image("Media-2")
+    out = tmp_path / "images.key"
+    deck.save(out)
+
+    live = open_in_keynote(out)
+    assert len(live) == 3
+    resaved = tmp_path / "images-resaved.key"
+    live.save(resaved)
+    again = Presentation.open(resaved)
+    (placeholder,) = again[0].images
+    assert (placeholder.placeholder, placeholder.pixel_size, placeholder.description) == ("Media", (1600, 900), "A red picture")
+    assert placeholder.data == png(1600, 900)
+    (square,) = again[1].images
+    assert square.position == pytest.approx((100, 100)) and square.size == pytest.approx((400, 400))
+    assert square.description == "A blue square"
+    assert sorted((i.placeholder, i.is_sample) for i in again[2].images) == [("Media", False), ("Media-1", True)]

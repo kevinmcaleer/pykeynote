@@ -12,18 +12,25 @@ Each slide becomes a block, and blocks are separated by ``---``::
 
     A paragraph without a bullet
 
+    ![A robot arm](images/arm.png)
+    ![Logo](images/logo.png "1600,40 200x100")
+
     ???
     Presenter notes
 
 Slide settings go in HTML comments, so the Markdown still renders cleanly
 elsewhere. Notes follow a line holding only ``???``, as in remark.js.
+
+An image fills the layout's next media placeholder, or, if its title gives
+a frame (``"x,y"`` or ``"x,y widthxheight"``, in points), goes exactly there.
 """
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 from .text import Paragraph
 
@@ -34,14 +41,51 @@ SLIDE_SEPARATOR = "---"
 NOTES_MARKER = "???"
 
 # A plain paragraph starting like this would read as Markdown syntax.
-_NEEDS_ESCAPE = re.compile(r"^(#|[-*+] |\d+[.)] |>|---|\?\?\?|<!--)")
+_NEEDS_ESCAPE = re.compile(r"^(#|[-*+] |\d+[.)] |>|---|\?\?\?|<!--|!\[)")
 
 
 def _fmt_seconds(value: float) -> str:
     return f"{value:g}s"
 
 
-def slide_to_markdown(slide: "Slide") -> str:
+def _fmt_number(value: float) -> str:
+    return f"{round(value, 1):g}"
+
+
+def _image_names(presentation: "Presentation") -> Dict[str, Set[str]]:
+    """Each name images were added under, with the files stored under it."""
+    names: Dict[str, Set[str]] = {}
+    for slide in presentation.slides:
+        for image in slide.images:
+            if image.name:
+                names.setdefault(image.name, set()).add(image.filename)
+    return names
+
+
+def _image_lines(slide: "Slide", image_dir: Optional[str], names: Dict[str, Set[str]]) -> List[str]:
+    lines = []
+    placeholders = [i for i in slide.placeholders if not i.is_sample]
+    free = [i for i in slide.images if i.placeholder is None and not i.is_sample]
+    for image in placeholders + free:
+        # The name it was added under, unless another picture in the deck has it too.
+        path = image.name if names.get(image.name, {image.filename}) == {image.filename} else image.filename
+        if image_dir is not None:
+            os.makedirs(image_dir, exist_ok=True)
+            with open(os.path.join(image_dir, path), "wb") as fh:
+                fh.write(image.data)
+            path = image_dir.replace(os.sep, "/").rstrip("/") + "/" + path
+        if " " in path or ")" in path:
+            path = f"<{path}>"
+        alt = " ".join(image.description.split()).replace("]", "\\]")
+        frame = ""
+        if image.placeholder is None:
+            (x, y), (w, h) = image.position, image.size
+            frame = f' "{_fmt_number(x)},{_fmt_number(y)} {_fmt_number(w)}x{_fmt_number(h)}"'
+        lines.append(f"![{alt}]({path}{frame})")
+    return lines
+
+
+def slide_to_markdown(slide: "Slide", image_dir: Optional[str] = None, _names: Optional[Dict[str, Set[str]]] = None) -> str:
     lines: List[str] = [f"<!-- layout: {slide.layout} -->"]
     t = slide.transition
     if t.effect:
@@ -72,14 +116,21 @@ def slide_to_markdown(slide: "Slide") -> str:
         lines.append("")
         lines.extend(body)
 
+    images = _image_lines(slide, image_dir, _image_names(slide.presentation) if _names is None else _names)
+    if images:
+        lines.append("")
+        lines.extend(images)
+
     notes = slide.notes.strip()
     if notes:
         lines.extend(["", NOTES_MARKER, notes])
     return "\n".join(lines) + "\n"
 
 
-def to_markdown(presentation: "Presentation") -> str:
-    return f"\n{SLIDE_SEPARATOR}\n\n".join(slide_to_markdown(s) for s in presentation.slides)
+def to_markdown(presentation: "Presentation", image_dir: Optional[str] = None) -> str:
+    """The presentation as Markdown. With ``image_dir``, images are saved there and linked by that path."""
+    names = _image_names(presentation)
+    return f"\n{SLIDE_SEPARATOR}\n\n".join(slide_to_markdown(s, image_dir, names) for s in presentation.slides)
 
 
 # --- Markdown to a presentation -------------------------------------------------
@@ -88,6 +139,18 @@ _COMMENT = re.compile(r"^<!--\s*(.*?)\s*-->$")
 _HEADING = re.compile(r"^#{1,2}\s+(.*)$")
 _BULLET = re.compile(r"^(\s*)(?:[-*+]|\d+[.)])\s+(.*)$")
 _TRANSITION = re.compile(r"^(.*?)(?:\s+([\d.]+)\s*s)?$")
+_IMAGE = re.compile(r'^!\[((?:\\.|[^\]])*)\]\(\s*(<[^>]*>|[^\s)]+)(?:\s+"([^"]*)")?\s*\)$')
+_FRAME = re.compile(r"^\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)(?:\s+([\d.]+)\s*[x×]\s*([\d.]+))?\s*$")
+
+
+@dataclass
+class ImageSpec:
+    """An image parsed from Markdown. ``position`` and ``size`` are set when its title gives a frame."""
+
+    path: str
+    description: str = ""
+    position: Optional[Tuple[float, float]] = None
+    size: Optional[Tuple[float, float]] = None
 
 
 @dataclass
@@ -102,9 +165,17 @@ class SlideSpec:
     transition_duration: Optional[float] = None
     skipped: bool = False
     builds: List[dict] = field(default_factory=list)
+    images: List[ImageSpec] = field(default_factory=list)
 
     def default_layout(self) -> str:
         bulleted = any(p.bulleted for p in self.paragraphs)
+        photos = len([i for i in self.images if i.position is None])
+        if photos:
+            if self.paragraphs:
+                return "Title, Bullets & Photo"
+            if self.title:
+                return "Title & Photo"
+            return "Photo" if photos == 1 else "Photo - 3 Up"
         if self.title and self.paragraphs:
             return "Title & Bullets" if bulleted else "Title"
         if self.title:
@@ -134,6 +205,19 @@ def _parse_build(value: str) -> dict:
         else:
             build["delivery"] = low
     return build
+
+
+def _parse_image(match: "re.Match[str]") -> ImageSpec:
+    alt, path, title = match.group(1), match.group(2), match.group(3)
+    if path.startswith("<") and path.endswith(">"):
+        path = path[1:-1]
+    image = ImageSpec(path, re.sub(r"\\(.)", r"\1", alt))
+    frame = _FRAME.match(title or "")
+    if frame:
+        image.position = (float(frame.group(1)), float(frame.group(2)))
+        if frame.group(3):
+            image.size = (float(frame.group(3)), float(frame.group(4)))
+    return image
 
 
 def parse_markdown(text: str) -> List[SlideSpec]:
@@ -186,6 +270,11 @@ def parse_markdown(text: str) -> List[SlideSpec]:
                 elif key == "build":
                     spec.builds.append(_parse_build(value))
                 continue
+            image = _IMAGE.match(stripped)
+            if image:
+                flush()
+                spec.images.append(_parse_image(image))
+                continue
             heading = _HEADING.match(stripped)
             if heading and spec.title is None and not spec.paragraphs and not pending:
                 spec.title = _clean(heading.group(1))
@@ -207,11 +296,16 @@ def parse_markdown(text: str) -> List[SlideSpec]:
     return specs
 
 
-def from_markdown(text: str, theme: str = "Basic White", aspect: str = "16:9") -> "Presentation":
+def from_markdown(
+    text: str, theme: str = "Basic White", aspect: str = "16:9", base_dir: Optional[str] = None
+) -> "Presentation":
     """Build a new presentation from Markdown in the :func:`to_markdown` format.
 
     A slide without a ``layout`` comment gets one from its content: title and
-    bullets give "Title & Bullets", a title alone "Title Only", and so on.
+    bullets give "Title & Bullets", a title alone "Title Only", an image with
+    a title "Title & Photo", and so on. Image paths are relative to
+    ``base_dir``, or the current directory. Media placeholders left without
+    an image are removed, rather than showing the theme's sample photos.
     """
     from .document import Presentation
 
@@ -236,6 +330,16 @@ def from_markdown(text: str, theme: str = "Basic White", aspect: str = "16:9") -
             slide.set_transition(spec.transition, spec.transition_duration)
         if spec.skipped:
             slide.skipped = True
+        for image in spec.images:
+            path = image.path
+            if not re.match(r"^[a-z]+://", path) and not os.path.isabs(path):
+                path = os.path.join(base_dir or os.getcwd(), path)
+            if image.position is not None:
+                slide.add_image(path, image.position, image.size, image.description, placeholder=False)
+            else:
+                slide.add_image(path, description=image.description)
+        for sample in [i for i in slide.images if i.is_sample]:
+            slide.remove_image(sample)
         for build in spec.builds:
             slide.add_build(**build)
     return deck

@@ -159,7 +159,7 @@ class Package:
         self._dirty.add(name)
 
     def remove_file(self, name: str) -> None:
-        for identifier in self.ids_in_file(name):
+        for identifier in self.ids_in_file(name) if name in self._iwa else []:
             self._segments.pop(identifier, None)
         self._iwa.pop(name, None)
         self._raw.pop(name, None)
@@ -187,6 +187,10 @@ class Package:
 
     def read_file(self, name: str) -> bytes:
         return self._raw[name]
+
+    def write_file(self, name: str, data: bytes) -> None:
+        """Add or replace a file that isn't an archive, such as an image in ``Data/``."""
+        self._raw[name] = data
 
     # --- saving ---------------------------------------------------------------
 
