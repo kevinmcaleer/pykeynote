@@ -41,7 +41,8 @@ print(deck.to_markdown())
 ```python
 from pykeynote import Presentation, Paragraph, from_markdown
 
-deck = Presentation.new()                 # bundled Basic White theme, no slides yet
+deck = Presentation.new()                 # Basic White, 16:9, no slides yet
+# Presentation.new(aspect="4:3") gives Keynote's Standard 1024 x 768 size
 deck.add_slide("Title", title="Robots!", body="Kevin McAleer")
 slide = deck.add_slide(
     "Title & Bullets",

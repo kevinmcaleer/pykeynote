@@ -136,3 +136,13 @@ def test_slide_operations_open_in_keynote(tmp_path, open_in_keynote):
 
     live = open_in_keynote(out)
     assert [r["title"] for r in live.read_slides()] == expected
+
+
+@pytest.mark.parametrize("aspect, size", [("16:9", (1920, 1080)), ("4:3", (1024, 768))])
+def test_new_deck_size_in_keynote(tmp_path, open_in_keynote, aspect, size):
+    from pykeynote import from_markdown
+
+    out = tmp_path / f"deck-{aspect.replace(':', 'x')}.key"
+    from_markdown(MARKDOWN, aspect=aspect).save(out)
+    info = open_in_keynote(out).info()
+    assert (info["width"], info["height"]) == size
