@@ -78,6 +78,33 @@ theme's look. A deck from `Presentation.new()` has one of every layout to
 copy from, kept out of sight and left out when you save. For a deck you
 opened, at least one slide must already use the layout.
 
+## Themes
+
+`pykeynote.themes()` lists the bundled themes, each at 16:9 and 4:3. Start a
+deck in one, or switch an existing deck to another:
+
+```python
+from pykeynote import Presentation, themes
+
+print(themes())                           # ['Basic Black', 'Basic White', ...]
+deck = Presentation.new("Basic Black", aspect="4:3")
+
+deck = Presentation.open("talk.key")
+deck.apply_theme("Basic Black")           # or: deck.theme = "Basic Black"
+deck.apply_theme("Basic Black", layouts={"Quote": "Statement"})
+deck.save("talk-dark.key")
+```
+
+`apply_theme` rebuilds each slide on the new theme's layout of the same
+name, or the closest one that shows a title and body where the slide has
+them (`deck.match_layout(name, title=True, body=True)` shows the choice).
+Titles and bodies with their indent levels, notes, transitions, skipping
+and builds on titles and bodies come along. Images, shapes, text boxes and
+text formatting beyond the layout's own don't. The slide size stays 16:9 or
+4:3 unless you pass `aspect=`.
+
+The templates are made by Keynote 14.5 with `scripts/make_templates.py`.
+
 ## Markdown
 
 `to_markdown()` writes one block per slide, separated by `---`. Slide
@@ -114,6 +141,7 @@ pykeynote duplicate talk.key 1
 pykeynote move talk.key 3 0
 pykeynote delete talk.key -1
 pykeynote build talk.key 1 --target body --effect dissolve
+pykeynote theme talk.key "Basic Black" --layout Quote=Statement
 pykeynote themes
 ```
 
@@ -129,7 +157,7 @@ server over stdio, so Claude and other MCP clients can read and edit decks.
 It has no extra dependencies, and needs a pykeynote release newer than 0.2.0.
 Its tools are `list_themes`, `deck_info`,
 `read_slide`, `export_markdown`, `create_deck`, `edit_slide`, `add_slide`,
-`delete_slide`, `move_slide`, `duplicate_slide`, `add_build` and
+`delete_slide`, `move_slide`, `duplicate_slide`, `apply_theme`, `add_build` and
 `clear_builds`. Editing tools save the deck when they finish, or write a copy
 when given `output`.
 
@@ -167,7 +195,8 @@ Then ask something like "Make a five-slide deck about robot arms in
 2. Edit text and notes, then save. **Done.**
 3. Add, duplicate, delete and reorder slides, set transitions and skipping, and build decks from Markdown. **Done.**
 4. Build animations on titles and bodies. **Done.**
-5. A command line tool and an MCP server for LLMs. **Done.** Next: more bundled themes, images, and builds on other shapes.
+5. More bundled themes and switching a deck's theme. **Done.**
+6. A command line tool and an MCP server for LLMs. **Done.** Next: images, and builds on other shapes.
 
 ## Driving Keynote directly (legacy)
 

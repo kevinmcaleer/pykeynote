@@ -92,6 +92,9 @@ def _run(args: argparse.Namespace) -> Any:
         return tools.move_slide(args.deck, args.index, args.to, args.output)
     if c == "duplicate":
         return tools.duplicate_slide(args.deck, args.index, args.to, args.output)
+    if c == "theme":
+        layouts = dict(m.split("=", 1) for m in args.layout or [])
+        return tools.apply_theme(args.deck, args.theme, args.aspect, layouts, args.output)
     if c == "build":
         if args.clear:
             return tools.clear_builds(args.deck, args.index, args.output)
@@ -104,7 +107,7 @@ def _show(args: argparse.Namespace, result: Any) -> None:
     c = args.command
     if c == "themes":
         print("\n".join(result["themes"]))
-    elif c in ("info", "new"):
+    elif c in ("info", "new", "theme"):
         _print_info(result)
     elif c == "export":
         if not result["output"]:
@@ -164,6 +167,11 @@ def parser() -> argparse.ArgumentParser:
     cp.add_argument("to", type=int, help="where the slide ends up")
     cp = command("duplicate", "copy a slide", index=True, writes=True)
     cp.add_argument("--to", type=int, help="where the copy goes (default: right after)")
+
+    cp = command("theme", "switch a deck to another bundled theme, keeping its content", writes=True)
+    cp.add_argument("theme", help="a theme from 'pykeynote themes'")
+    cp.add_argument("--aspect", choices=["16:9", "4:3"], help="default: the closer one to the current size")
+    cp.add_argument("--layout", action="append", metavar="OLD=NEW", help="use layout NEW for slides on OLD")
 
     cp = command("build", "add a build animation to a slide, or clear them", index=True, writes=True)
     cp.add_argument("--target", default="body", choices=["title", "body"])

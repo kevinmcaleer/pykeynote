@@ -210,7 +210,7 @@ export async function fromMarkdown(text: string, options: FromMarkdownOptions = 
   const available = new Set(deck.layouts);
   for (const spec of parseMarkdown(text)) {
     let layout = spec.layout || defaultLayout(spec);
-    if (!available.has(layout)) layout = "Title & Bullets";
+    if (!available.has(layout)) layout = deck.matchLayout(layout, spec.title !== null, spec.paragraphs.length > 0);
     const slide = deck.addSlide(layout);
     if (spec.title !== null) {
       if (slide.title === null) throw new Error(`the "${layout}" layout doesn't show a title, for ${JSON.stringify(spec.title)}`);

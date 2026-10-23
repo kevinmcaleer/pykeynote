@@ -190,6 +190,18 @@ def duplicate_slide(path: str, index: int, to: Optional[int] = None, output: Opt
     return slide_detail(slide)
 
 
+def apply_theme(
+    path: str,
+    theme: str,
+    aspect: Optional[str] = None,
+    layouts: Optional[Dict[str, str]] = None,
+    output: Optional[str] = None,
+) -> Dict[str, Any]:
+    deck = _open(path)
+    deck.apply_theme(theme, aspect, layouts)
+    return deck_info(_save(deck, output))
+
+
 def add_build(
     path: str,
     index: int,
@@ -371,6 +383,28 @@ TOOLS: List[Dict[str, Any]] = [
         "description": "Copy a slide. The copy goes right after it unless to is given. Saves the deck.",
         "inputSchema": _schema(
             {"path": _PATH, "index": _INDEX, "to": {"type": "integer"}, "output": _OUTPUT}, ["path", "index"]
+        ),
+    },
+    {
+        "name": "apply_theme",
+        "function": apply_theme,
+        "description": (
+            "Switch a deck to one of the bundled themes (see list_themes), keeping "
+            "each slide's title, body, notes, transition, skipping and builds. "
+            "Slides move to the new theme's layout of the same name, or the closest "
+            "match. Images, shapes and extra text boxes are not carried over. Saves the deck."
+        ),
+        "inputSchema": _schema(
+            {
+                "path": _PATH,
+                "theme": {"type": "string", "description": "A theme from list_themes"},
+                "aspect": {"type": "string", "enum": ["16:9", "4:3"],
+                           "description": "Defaults to the closer of the two to the current size"},
+                "layouts": {"type": "object", "additionalProperties": {"type": "string"},
+                            "description": "Old layout name to new layout name, e.g. {\"Quote\": \"Statement\"}"},
+                "output": _OUTPUT,
+            },
+            ["path", "theme"],
         ),
     },
     {

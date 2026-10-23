@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from pykeynote import Presentation, tools
+from pykeynote import Presentation, themes, tools
 from pykeynote.cli import main
 
 MARKDOWN = """# Robots!
@@ -110,6 +110,16 @@ def test_builds(deck):
     assert tools.clear_builds(deck, 1)["builds"] == []
 
 
+def test_apply_theme(deck, tmp_path):
+    out = str(tmp_path / "black.key")
+    theme = themes()[-1]  # whichever is bundled; the 4:3 switch is the visible change
+    info = tools.apply_theme(deck, theme, aspect="4:3", output=out)
+    assert info["theme"] == theme
+    assert info["size"] == {"width": 1024, "height": 768}
+    assert [s["title"] for s in info["slides"]] == ["Robots!", "Why robots?"]
+    assert tools.deck_info(deck)["size"] == {"width": 1920, "height": 1080}
+
+
 def test_export_markdown(deck, tmp_path):
     out = tmp_path / "talk.md"
     result = tools.export_markdown(deck, str(out))
@@ -170,6 +180,9 @@ def test_cli_round_trip(tmp_path, capsys):
         assert run(capsys, *argv)[0] == 0, argv
     assert [s.title for s in Presentation.open(key)] == ["New", "End", "Robots!"]
     assert Presentation.open(key)[0].builds[0].target == "title"
+
+    code, out, _ = run(capsys, "theme", key, "Basic White", "--aspect", "4:3", "--json")
+    assert code == 0 and json.loads(out)["size"] == {"width": 1024, "height": 768}
 
     code, out, _ = run(capsys, "export", key)
     assert out.startswith("<!-- layout:")

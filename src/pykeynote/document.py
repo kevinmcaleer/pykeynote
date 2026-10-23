@@ -434,6 +434,10 @@ class Presentation:
         """Theme name, e.g. ``"Basic White"``."""
         return _theme_name(self._show_theme.super.theme_identifier)
 
+    @theme.setter
+    def theme(self, name: str) -> None:
+        self.apply_theme(name)
+
     @property
     def _show_theme(self) -> Any:
         return self.package.deref(self._show.theme)
@@ -443,6 +447,94 @@ class Presentation:
         """Names of the master slides in this presentation's theme, in order."""
         p = self.package
         return [p.deref(p.deref(ref).slide).name for ref in self._show_theme.templates]
+
+    def _layout_shows(self) -> dict:
+        """For each layout this presentation has a slide for, whether it shows ``(title, body)``."""
+        shows: dict = {}
+        for ref in self._show.slideTree.slides:
+            slide = Slide(self, ref, -1)
+            shows.setdefault(slide.layout, (slide.title is not None, slide.body is not None))
+        return shows
+
+    def match_layout(self, layout: str, title: bool = False, body: bool = False) -> str:
+        """The layout here that best stands in for ``layout`` from another theme.
+
+        A layout with the same name is used when it shows a title and a
+        body wherever they're needed (``title`` and ``body`` say which are).
+        Otherwise the layout is picked by what it shows: "Title & Bullets"
+        for a title and body, "Bullets" for a body alone, "Title Only" for a
+        title alone, and "Blank" for neither.
+        """
+        shows = self._layout_shows()
+
+        def fits(name: str) -> bool:
+            if name not in shows:
+                return False
+            has_title, has_body = shows[name]
+            return (has_title or not title) and (has_body or not body)
+
+        if fits(layout):
+            return layout
+        fallbacks = {
+            (True, True): ["Title & Bullets", "Title, Bullets & Photo", "Title"],
+            (False, True): ["Bullets", "Statement", "Title & Bullets"],
+            (True, False): ["Title Only", "Section", "Title"],
+            (False, False): ["Blank", "Title Only"],
+        }[(title, body)]
+        for name in fallbacks + [n for n in self.layouts if n in shows]:
+            if fits(name):
+                return name
+        raise ValueError(f"no layout in the {self.theme!r} theme can stand in for {layout!r}")
+
+    def apply_theme(
+        self,
+        theme: str,
+        aspect: Optional[str] = None,
+        layouts: Optional[dict] = None,
+    ) -> None:
+        """Switch to one of the bundled themes (see :func:`themes`), keeping the content.
+
+        Each slide is rebuilt on the new theme's layout with the same name,
+        or the closest match (see :meth:`match_layout`), and keeps its title
+        and body text with indent levels, presenter notes, transition,
+        skipped flag, and builds on its title and body. ``layouts`` maps old
+        layout names to new ones where the default choice isn't wanted, e.g.
+        ``{"Quote": "Statement"}``. Images, shapes, text boxes and text
+        formatting that differs from the layout's own are not carried over.
+
+        ``aspect`` is ``"16:9"`` or ``"4:3"``; it defaults to whichever is
+        closer to the current slide size.
+        """
+        if aspect is None:
+            width, height = self.size
+            aspect = "4:3" if width / height < (16 / 9 + 4 / 3) / 2 else "16:9"
+        layouts = layouts or {}
+        target = Presentation.new(theme, aspect)
+        for old in self.slides:
+            title, body = old.title_text, old.body_text
+            wanted = layouts.get(old.layout)
+            if wanted is not None and wanted not in target.layouts:
+                raise ValueError(f"no {wanted!r} layout in the {theme!r} theme; layouts: {', '.join(target.layouts)}")
+            layout = wanted or target.match_layout(old.layout, title is not None, body is not None)
+            new = target.add_slide(layout)
+            if title is not None and new.title_text is not None:
+                new.title_text.set_paragraphs(title.paragraphs or [""])
+            if body is not None and new.body_text is not None:
+                new.body_text.set_paragraphs(body.paragraphs or [""])
+            new.notes = old.notes
+            t = old.transition
+            new.set_transition(t.effect_id, t.duration, t.delay, t.automatic)
+            new.skipped = old.skipped
+            for b in old.builds:
+                if b.target not in ("title", "body") or getattr(new, f"{b.target}_text") is None:
+                    continue
+                delivery = b.delivery.lower() if b.delivery.lower() in _builds._DELIVERY_NAMES else None
+                new.add_build(b.target, b.effect_id, delivery, b.duration, b.kind)
+            new._touched()
+        self.package = target.package
+        self._show_id = target._show_id
+        self._show = target._show
+        self._prototypes = target._prototypes
 
     def to_markdown(self) -> str:
         from .markdown import to_markdown

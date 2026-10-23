@@ -88,7 +88,8 @@ export class Slide {
     this.touched();
   }
 
-  private touched(): void {
+  /** @internal */
+  touched(): void {
     // Keynote redraws thumbnails flagged as dirty when it opens the file.
     if (!this.node.thumbnailsAreDirty) {
       this.node.thumbnailsAreDirty = true;
@@ -262,6 +263,13 @@ export interface CreateOptions {
   aspect?: Aspect;
 }
 
+export interface ApplyThemeOptions {
+  /** Defaults to whichever of ``"16:9"`` and ``"4:3"`` is closer to the current slide size. */
+  aspect?: Aspect;
+  /** Old layout names mapped to new ones where the default choice isn't wanted, e.g. ``{ Quote: "Statement" }``. */
+  layouts?: Record<string, string>;
+}
+
 export interface AddSlideOptions {
   title?: string;
   body?: string | Iterable<ParagraphInput>;
@@ -284,13 +292,13 @@ async function readPackage(path: string): Promise<Package> {
 
 /** A Keynote presentation read from a ``.key`` file. Keynote isn't needed. */
 export class Presentation {
-  private readonly showId: number;
-  private readonly show: Message;
+  private showId: number;
+  private show: Message;
   /** Slides kept only as models for addSlide(); hidden, and left out on save. */
   private prototypes = new Set<number>();
 
   /** The raw archives and files, for reaching what this class doesn't cover. */
-  readonly package: Package;
+  package: Package;
 
   constructor(
     pkg: Package,
@@ -452,6 +460,82 @@ export class Presentation {
   get layouts(): string[] {
     const p = this.package;
     return (this.showTheme.templates as Message[]).map((ref) => p.deref(p.deref(ref).slide).name);
+  }
+
+  /** For each layout this presentation has a slide for, whether it shows ``[title, body]``. */
+  private layoutShows(): Map<string, [boolean, boolean]> {
+    const shows = new Map<string, [boolean, boolean]>();
+    for (const ref of this.show.slideTree.slides as Message[]) {
+      const slide = new Slide(this, ref, -1);
+      if (!shows.has(slide.layout)) shows.set(slide.layout, [slide.title !== null, slide.body !== null]);
+    }
+    return shows;
+  }
+
+  /**
+   * The layout here that best stands in for ``layout`` from another theme.
+   *
+   * A layout with the same name is used when it shows a title and a body
+   * wherever they're needed (``title`` and ``body`` say which are).
+   * Otherwise the layout is picked by what it shows: "Title & Bullets" for a
+   * title and body, "Bullets" for a body alone, "Title Only" for a title
+   * alone, and "Blank" for neither.
+   */
+  matchLayout(layout: string, title = false, body = false): string {
+    const shows = this.layoutShows();
+    const fits = (name: string): boolean => {
+      const s = shows.get(name);
+      return s !== undefined && (s[0] || !title) && (s[1] || !body);
+    };
+    if (fits(layout)) return layout;
+    const fallbacks =
+      title && body ? ["Title & Bullets", "Title, Bullets & Photo", "Title"]
+      : body ? ["Bullets", "Statement", "Title & Bullets"]
+      : title ? ["Title Only", "Section", "Title"]
+      : ["Blank", "Title Only"];
+    const found = [...fallbacks, ...this.layouts].find(fits);
+    if (found === undefined) throw new Error(`no layout in the "${this.theme}" theme can stand in for "${layout}"`);
+    return found;
+  }
+
+  /**
+   * Switch to one of the bundled themes (see {@link themes}), keeping the content.
+   *
+   * Each slide is rebuilt on the new theme's layout with the same name, or
+   * the closest match (see {@link matchLayout}), and keeps its title and
+   * body text with indent levels, presenter notes, transition and skipped
+   * flag. Builds, images, shapes, text boxes and text formatting that
+   * differs from the layout's own are not carried over.
+   */
+  async applyTheme(theme: string, options: ApplyThemeOptions = {}): Promise<void> {
+    let aspect = options.aspect;
+    if (aspect === undefined) {
+      const { width, height } = this.size;
+      aspect = width / height < (16 / 9 + 4 / 3) / 2 ? "4:3" : "16:9";
+    }
+    const layouts = options.layouts ?? {};
+    const target = await Presentation.create({ theme, aspect });
+    for (const old of this.slides) {
+      const title = old.titleText;
+      const body = old.bodyText;
+      const wanted = layouts[old.layout];
+      if (wanted !== undefined && !target.layouts.includes(wanted)) {
+        throw new Error(`no "${wanted}" layout in the "${theme}" theme; layouts: ${target.layouts.join(", ")}`);
+      }
+      const layout = wanted ?? target.matchLayout(old.layout, title !== null, body !== null);
+      const slide = target.addSlide(layout);
+      if (title !== null) slide.titleText?.setParagraphs(title.paragraphs.length ? title.paragraphs : [""]);
+      if (body !== null) slide.bodyText?.setParagraphs(body.paragraphs.length ? body.paragraphs : [""]);
+      slide.notes = old.notes;
+      const t = old.transition;
+      slide.setTransition(t.effectId, { duration: t.duration, delay: t.delay, automatic: t.automatic });
+      slide.skipped = old.skipped;
+      slide.touched();
+    }
+    this.package = target.package;
+    this.showId = target.showId;
+    this.show = target.show;
+    this.prototypes = target.prototypes;
   }
 
   toMarkdown(): string {
