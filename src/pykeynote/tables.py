@@ -611,7 +611,10 @@ def _table_owners(donor: Package, closure: List[int]) -> List[int]:
     return [i for i, d in zip(ids, deps) if _uuid_value(d.formula_owner_uid) in uuids | bases]
 
 
-def _register_owners(package: Package, owner_ids: List[int]) -> None:
+_RENUMBER_OWNERS = True
+
+
+def _register_owners(package: Package, owner_ids: List[int], renumber: bool = True) -> None:
     """Give copied formula owners new internal numbers and list them in the calculation engine."""
     engine_id, engine = _calc_engine(package)
     tracker = engine.dependency_tracker
@@ -621,7 +624,7 @@ def _register_owners(package: Package, owner_ids: List[int]) -> None:
     internal: Dict[int, int] = {}
     for i in owner_ids:
         old = package.get(i).internal_formula_owner_id
-        internal[old] = next_id
+        internal[old] = next_id if renumber else old
         next_id += 1
 
     def renumber(message: Any) -> None:
@@ -669,7 +672,7 @@ def copy_table(importer: Any, root: int, src_slide_id: int, slide: "Slide") -> T
         _upgrade_calc_engine(importer.dst)
     owners = _table_owners(importer.src, importer.closure(root, {src_slide_id}))
     id_map = importer.copy_drawable(root, src_slide_id, slide._slide_id, extra=owners)
-    _register_owners(importer.dst, [id_map[i] for i in owners])
+    _register_owners(importer.dst, [id_map[i] for i in owners], renumber=_RENUMBER_OWNERS)
     table = Table(slide, id_map[root])
     if _REGISTER_HEADER_NAMES:
         _register_header_names(importer.dst, table)
