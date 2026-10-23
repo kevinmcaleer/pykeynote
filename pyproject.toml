@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pykeynote"
+version = "0.1.0"
+description = "Create, read and edit Apple Keynote presentations from Python"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Kevin McAleer" }]
+classifiers = [
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "keynote: needs macOS with Keynote installed (set PYKEYNOTE_INTEGRATION=1 to run)",
+]
