@@ -49,11 +49,12 @@ on run argv
     end if
     set firstSlide to slide 1 of d
     repeat with m in master slides of d
+      set mName to (name of m) as text
       set s to make new slide at end of slides of d with properties {{base slide:m}}
       tell s
-        if title showing then set object text of default title item to (name of m)
+        if title showing then set object text of default title item to mName
         if body showing then set object text of default body item to "First bullet" & linefeed & "Second bullet" & linefeed & "Third bullet"
-        set presenter notes to "Notes for " & (name of m)
+        set presenter notes to "Notes for " & mName
       end tell
     end repeat
     delete firstSlide
