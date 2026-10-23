@@ -181,24 +181,40 @@ def add_external_reference(package: Package, component: Any, target: int, weak: 
     package.mark_changed(METADATA_ID)
 
 
+def remove_external_reference(package: Package, component: Any, target: int) -> None:
+    """Forget that ``component`` refers to the object ``target``."""
+    refs = [e for e in component.external_references if not (e.HasField("object_identifier") and e.object_identifier == target)]
+    if len(refs) != len(component.external_references):
+        del component.external_references[:]
+        for e in refs:
+            component.external_references.add().CopyFrom(e)
+        package.mark_changed(METADATA_ID)
+
+
 def place_on_slide(slide: "Slide", root_id: int) -> None:
-    """Draw the drawable ``root_id`` (already in the slide's file) in front of everything else."""
+    """Draw the drawable ``root_id`` in front of everything else."""
     s = slide._slide
+    package = slide._package
     s.owned_drawables.add().identifier = root_id
     s.drawables_z_order.add().identifier = root_id
-    slide._package.add_object_reference(slide._slide_id, root_id)
+    package.add_object_reference(slide._slide_id, root_id)
+    # A table lives in the calculation engine's file; Keynote only loads it if
+    # the slide's component says it refers to it.
+    add_external_reference(package, package.component(component_id_of(package, slide._slide_id)), root_id)
     slide._package.mark_changed(slide._slide_id)
     slide._touched()
 
 
 def remove_from_slide(slide: "Slide", root_id: int) -> None:
     s = slide._slide
-    for field in ("owned_drawables", "drawables_z_order"):
+    package = slide._package
+    for field in ("owned_drawables", "drawables_z_order", "infos_using_object_placeholder_geometry"):
         kept = [r.identifier for r in getattr(s, field) if r.identifier != root_id]
         del getattr(s, field)[:]
         for i in kept:
             getattr(s, field).add().identifier = i
-    slide._package.remove_object_reference(slide._slide_id, root_id)
+    package.remove_object_reference(slide._slide_id, root_id)
+    remove_external_reference(package, package.component(component_id_of(package, slide._slide_id)), root_id)
     slide._package.mark_changed(slide._slide_id)
     slide._touched()
 

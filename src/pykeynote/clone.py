@@ -148,7 +148,6 @@ class Importer:
         self.fixed[stylesheet_id(src)] = stylesheet_id(dst)
         self.fixed.update(_preset_map(src, dst))
         self.fixed.update(presets or {})
-        self.keep_uuids = False  # for experiments: copy UUIDs unchanged
         self.src_style_ids = set(src.ids_in_file(STYLESHEET_FILE))
 
     def closure(self, root: int, stop: Set[int]) -> List[int]:
@@ -216,8 +215,7 @@ class Importer:
                 if hasattr(obj, "ListFields"):
                     obj = copy.deepcopy(obj)
                     remap_references(obj, ref_map)
-                    if not self.keep_uuids:
-                        remap_uuids(obj, uuids, strings)
+                    remap_uuids(obj, uuids, strings)
                 objects.append(obj)
             dst.add_segment(dst_file, IWAArchiveSegment(header, objects))
             placed.append((dst_file, id_map[i]))

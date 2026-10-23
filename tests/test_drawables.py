@@ -325,3 +325,45 @@ def test_new_table_id_is_its_calc_engine_uuid():
         u = _table_uid(deck.package, table)
         value = (u.upper << 64) | u.lower
         assert table._model.table_id == str(uuid.UUID(bytes=value.to_bytes(16, "little"))).upper()
+
+
+def _slide_refers_to(slide, identifier):
+    from pykeynote.drawables import component_id_of
+
+    p = slide._package
+    component = p.component(component_id_of(p, slide._slide_id))
+    return any(e.HasField("object_identifier") and e.object_identifier == identifier for e in component.external_references)
+
+
+def test_slides_refer_to_their_tables(deck, tmp_path):
+    """Keynote only loads a table (kept in the calculation engine's file) that its slide's component refers to."""
+    new = deck.add_slide("Blank").add_table([["a", "b"], [1, 2]])
+    deck.duplicate_slide(1)
+    out = reopen(deck, tmp_path)
+    for slide in out:
+        for table in slide.tables:
+            assert _slide_refers_to(slide, table.identifier)
+    assert out[2].tables[0].identifier != out[1].tables[0].identifier
+    assert not _slide_refers_to(out[2], out[1].tables[0].identifier)
+    assert new.identifier in [t.identifier for t in out[-1].tables]
+
+
+def test_deleting_a_placeholder_table_forgets_it(deck, tmp_path):
+    slide = deck[1]
+    table = slide.tables[0]
+    assert table.identifier in [r.identifier for r in slide._slide.infos_using_object_placeholder_geometry]
+    slide.delete_drawable(table)
+    out = reopen(deck, tmp_path)
+    assert table.identifier not in [r.identifier for r in out[1]._slide.infos_using_object_placeholder_geometry]
+    assert not _slide_refers_to(out[1], table.identifier)
+
+
+def test_copied_table_uids_are_sorted(deck):
+    copy = deck.duplicate_slide(1)
+    uids = copy._package.deref(copy.tables[0]._model.base_column_row_uids)
+    for kind in ("column", "row"):
+        keys = [(u.upper, u.lower) for u in getattr(uids, f"sorted_{kind}_uids")]
+        assert keys == sorted(keys)
+        index_for_uid = list(getattr(uids, f"{kind}_index_for_uid"))
+        uid_for_index = list(getattr(uids, f"{kind}_uid_for_index"))
+        assert all(uid_for_index[index] == pos for pos, index in enumerate(index_for_uid))

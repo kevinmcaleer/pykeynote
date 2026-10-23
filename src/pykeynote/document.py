@@ -396,6 +396,7 @@ def _unshare_drawables(original: "Slide", copy: "Slide") -> None:
     objects in other files, which the copy would otherwise share.
     """
     from .clone import Importer
+    from .drawables import add_external_reference, component_id_of, remove_external_reference
 
     pairs = [(a, b) for a, b in zip(original.drawables, copy.drawables) if isinstance(a, (Table, Chart))]
     if not pairs:
@@ -416,6 +417,9 @@ def _unshare_drawables(original: "Slide", copy: "Slide") -> None:
                 p.mark_changed(build_ref.identifier)
         p.remove_object_reference(copy._slide_id, alias.identifier)
         p.add_object_reference(copy._slide_id, new.identifier)
+        component = p.component(component_id_of(p, copy._slide_id))
+        remove_external_reference(p, component, alias.identifier)
+        add_external_reference(p, component, new.identifier)
         if alias.identifier != old.identifier:
             # The chart itself was copied with the slide's file: drop that copy and what only it owns.
             from .clone import owned_objects, remove_objects

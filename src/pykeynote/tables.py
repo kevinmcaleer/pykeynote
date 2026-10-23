@@ -569,6 +569,25 @@ def _set_uids(uid_map: Any, rows: int, columns: int) -> None:
         uid_for_index.extend(position[i] for i in range(count))  # where each index's UUID sits in the sorted list
 
 
+def _sort_uids(uid_map: Any) -> None:
+    """Re-sort the row and column UUIDs by (upper, lower), as Keynote keeps them, after they were renewed."""
+    for kind in ("column", "row"):
+        sorted_field = getattr(uid_map, f"sorted_{kind}_uids")
+        index_for_uid = getattr(uid_map, f"{kind}_index_for_uid")
+        pairs = sorted(((u.upper, u.lower), index) for u, index in zip(sorted_field, index_for_uid))
+        uid_for_index = getattr(uid_map, f"{kind}_uid_for_index")
+        position = [0] * len(uid_for_index)
+        del sorted_field[:]
+        del index_for_uid[:]
+        for pos, ((upper, lower), index) in enumerate(pairs):
+            u = sorted_field.add()
+            u.lower, u.upper = lower, upper
+            index_for_uid.append(index)
+            position[index] = pos
+        del uid_for_index[:]
+        uid_for_index.extend(position)
+
+
 # --- adding tables ----------------------------------------------------------------
 
 _INTERNAL_ID_FIELDS = ("internal_formula_owner_id", "internal_owner_id", "internal_owner_id_for_edge")
@@ -611,10 +630,7 @@ def _table_owners(donor: Package, closure: List[int]) -> List[int]:
     return [i for i, d in zip(ids, deps) if _uuid_value(d.formula_owner_uid) in uuids | bases]
 
 
-_RENUMBER_OWNERS = True
-
-
-def _register_owners(package: Package, owner_ids: List[int], renumber: bool = True) -> None:
+def _register_owners(package: Package, owner_ids: List[int]) -> None:
     """Give copied formula owners new internal numbers and list them in the calculation engine."""
     engine_id, engine = _calc_engine(package)
     tracker = engine.dependency_tracker
@@ -624,7 +640,7 @@ def _register_owners(package: Package, owner_ids: List[int], renumber: bool = Tr
     internal: Dict[int, int] = {}
     for i in owner_ids:
         old = package.get(i).internal_formula_owner_id
-        internal[old] = next_id if renumber else old
+        internal[old] = next_id
         next_id += 1
 
     def renumber(message: Any) -> None:
@@ -668,14 +684,15 @@ def _register_owners(package: Package, owner_ids: List[int], renumber: bool = Tr
 
 def copy_table(importer: Any, root: int, src_slide_id: int, slide: "Slide") -> Table:
     """Copy the table ``root`` from the importer's source package onto ``slide``. It isn't placed on the slide."""
-    if _UPGRADE_ENGINE:
-        _upgrade_calc_engine(importer.dst)
+    _upgrade_calc_engine(importer.dst)
     owners = _table_owners(importer.src, importer.closure(root, {src_slide_id}))
     id_map = importer.copy_drawable(root, src_slide_id, slide._slide_id, extra=owners)
-    _register_owners(importer.dst, [id_map[i] for i in owners], renumber=_RENUMBER_OWNERS)
+    _register_owners(importer.dst, [id_map[i] for i in owners])
     table = Table(slide, id_map[root])
-    if _REGISTER_HEADER_NAMES:
-        _register_header_names(importer.dst, table)
+    uids = table._model.base_column_row_uids
+    _sort_uids(importer.dst.deref(uids))
+    importer.dst.mark_changed(uids.identifier)
+    _register_header_names(importer.dst, table)
     return table
 
 
@@ -683,8 +700,6 @@ def copy_table(importer: Any, root: int, src_slide_id: int, slide: "Slide") -> T
 # their own archives rather than inline. Seed templates may predate it.
 _ENGINE_FEATURE = "TSCEReduceCalcEngineMsgSize"
 _ENGINE_VERSION = (3, 2, 10)
-_UPGRADE_ENGINE = True
-_REGISTER_HEADER_NAMES = True
 
 
 def _upgrade_calc_engine(package: Package) -> None:
