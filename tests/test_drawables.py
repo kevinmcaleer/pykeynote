@@ -143,11 +143,16 @@ def test_add_chart(tmp_path):
     line, pie = out[0].charts
     assert line.chart_type == "line"
     assert line.data == [[1, 2], [3, None]]
-    assert line.position == (10, 20)
     assert line.show_legend
+    # The plot shrinks to leave room for the legend above it, inside the box.
+    (px, py), (pw, ph) = line.position, line.size
+    legend = line._chart.legend_frame
+    top = py + ph / 2 + legend.origin.y
+    assert px == 10 and pw == 500 and py + ph == 420
+    assert 20 <= top < py
     assert pie.chart_type == "pie"
     assert pie.series_by == "column"  # so the first row's values are the slices
-    assert pie.size == (400, 400)
+    assert pie.size[0] == pie.size[1] < 400  # square, below its legend
     assert_no_dangling_references(out)
 
 

@@ -42,6 +42,7 @@ CHART_TYPES = {
 }
 _TYPE_NAMES = {v: k for k, v in CHART_TYPES.items()}
 _BY_ROW, _BY_COLUMN = 1, 2  # TSCH.SeriesDirection
+_LEGEND_GAP = 40.0  # points between the legend's bottom and the plot's top
 
 # Which chart in the bundled parts deck to copy for each type.
 _DONOR_FOR = {
@@ -180,6 +181,21 @@ class Chart(Drawable):
     def show_title(self, value: bool) -> None:
         self._set_setting("tschchartinfodefaultshowtitle", bool(value))
 
+    def _resized(self) -> None:
+        self._place_legend()
+
+    def _place_legend(self) -> None:
+        """Centre the legend just above the plot.
+
+        The chart's geometry is its plot area, and the legend's frame is an
+        offset from the plot's centre, so it moves with the chart.
+        """
+        width, height = self.size
+        frame = self._chart.legend_frame
+        frame.size.width = min(frame.size.width or 780.0, width)
+        frame.origin.x = -frame.size.width / 2
+        frame.origin.y = -height / 2 - _LEGEND_GAP - frame.size.height
+
     def to_dict(self) -> dict:
         d = super().to_dict()
         d.update(
@@ -243,13 +259,13 @@ def add_chart(
     if series_by is None:
         # A pie shows the first value of each series, so its slices are best taken from the columns.
         series_by = "column" if round_chart else "row"
-    if round_chart:
-        width = height = min(width, height)  # Keynote keeps pies square
-
     if chart_type not in CHART_TYPES:
         raise ValueError(f"chart type must be one of {', '.join(CHART_TYPES)}, not {chart_type!r}")
     if width <= 0 or height <= 0:
         raise ValueError("width and height must be more than 0")
+    series = len(row_names) if series_by == "row" else len(column_names)
+    if legend is None:
+        legend = series > 1
     p = slide._package
     presets = theme_presets(p).get("chart_presets", [])
     if not 0 <= style < len(presets):
@@ -262,13 +278,23 @@ def add_chart(
 
     importer = Importer(donor, p, rename=rename, presets={theme_presets(donor)["chart_presets"][donor_style]: presets[style]})
     chart = copy_chart(importer, root, donor_slide, slide)
+    if legend:
+        # The legend sits above the plot, inside the box we were given.
+        room = chart._chart.legend_frame.size.height + _LEGEND_GAP
+        if height > 2 * room:
+            y, height = y + room, height - room
+    if round_chart:
+        # Keynote keeps pies square; centre the square in the box.
+        side = min(width, height)
+        x, width = x + (width - side) / 2, side
+        height = side
     g = chart._info.geometry
     g.position.x, g.position.y = float(x), float(y)
     g.size.width, g.size.height = float(width), float(height)
+    chart._place_legend()
     chart.chart_type = chart_type
     chart.series_by = series_by
     chart.set_data(rows, row_names, column_names)
-    series = len(row_names) if series_by == "row" else len(column_names)
-    chart.show_legend = series > 1 if legend is None else legend
+    chart.show_legend = legend
     place_on_slide(slide, chart.identifier)
     return chart
