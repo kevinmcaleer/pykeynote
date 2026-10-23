@@ -80,6 +80,28 @@ opened, at least one slide must already use the layout.
 Without the file system, use `Presentation.fromBytes(bytes)` and
 `deck.toBytes()`.
 
+## Themes
+
+`themes()` lists the bundled themes, each at 16:9 and 4:3. Start a deck in
+one, or switch an existing deck to another:
+
+```ts
+import { Presentation, themes } from "@kevsmac/keynotejs";
+
+console.log(themes());                           // ["Basic Black", "Basic White", ...]
+const dark = await Presentation.create({ theme: "Basic Black", aspect: "4:3" });
+
+const talk = await Presentation.open("talk.key");
+await talk.applyTheme("Basic Black", { layouts: { Quote: "Statement" } });
+await talk.save("talk-dark.key");
+```
+
+`applyTheme` rebuilds each slide on the new theme's layout of the same
+name, or the closest one that shows a title and body where the slide has
+them (see `matchLayout`). Titles and bodies with their indent levels, notes,
+transitions and skipping come along. Builds, images, shapes, text boxes and
+text formatting beyond the layout's own don't.
+
 ## Markdown
 
 `toMarkdown()` writes one block per slide, separated by `---`. Slide

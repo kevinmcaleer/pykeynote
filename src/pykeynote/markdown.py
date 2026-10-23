@@ -220,7 +220,7 @@ def from_markdown(text: str, theme: str = "Basic White", aspect: str = "16:9") -
     for spec in parse_markdown(text):
         layout = spec.layout or spec.default_layout()
         if layout not in available:
-            layout = "Title & Bullets"
+            layout = deck.match_layout(layout, spec.title is not None, bool(spec.paragraphs))
         slide = deck.add_slide(layout)
         if spec.title is not None:
             if slide.title is None:
