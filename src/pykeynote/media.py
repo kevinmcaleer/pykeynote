@@ -473,8 +473,8 @@ def _replace(
         "background_removed",
     ):
         image.ClearField(f)
-    if description is not None:
-        image.super.accessibility_description = description
+    # The old description was of the old picture, as with the theme's sample photos.
+    image.super.accessibility_description = description or ""
     data_id = add_data(p, data, name, fmt, pixel_size)
     image.data.identifier = data_id
     _drop_data(p, component, image_id, [d for d in old_data if d != data_id])

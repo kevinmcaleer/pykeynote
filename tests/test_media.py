@@ -54,6 +54,15 @@ def test_read_placeholder_sample():
     assert image.description
 
 
+def test_new_picture_drops_the_sample_description():
+    """Keynote shows the sample photo's caption as the new picture's description otherwise."""
+    slide = Presentation.new().add_slide("Title & Photo", title="Robots")
+    assert slide.placeholders[0].description
+    image = slide.add_image(png(20, 10))
+    assert image.description == ""
+    assert slide.replace_image(image, png(10, 10)).description == ""
+
+
 def test_fill_placeholder(tmp_path):
     deck = Presentation.new()
     slide = deck.add_slide("Title & Photo", title="Robots")
