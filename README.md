@@ -1,11 +1,13 @@
 # pykeynote
 
-Create, read and edit Apple Keynote presentations from Python. Files are
-saved as native `.key` documents.
+Read, and soon write, Apple Keynote presentations from Python. pykeynote
+works on `.key` files directly, so it runs anywhere Python does. You don't
+need Keynote or a Mac.
 
-pykeynote drives Keynote itself through its scripting interface, so it needs
-macOS with Keynote installed. The first time it runs, macOS asks whether your
-terminal (or Python) may control Keynote. Say yes.
+A `.key` file is a zip of Snappy-compressed protobuf archives (`Index/*.iwa`)
+plus images and media in `Data/`. Decoding comes from
+[keynote-parser](https://github.com/psobot/keynote-parser), which supports
+files saved by Keynote up to 14.5.
 
 ## Install
 
@@ -13,64 +15,61 @@ terminal (or Python) may control Keynote. Say yes.
 pip install -e ".[dev]"
 ```
 
-## Quick start
+## Reading a deck
 
 ```python
-from pykeynote import Presentation, list_themes
+from pykeynote import Presentation
 
-print(list_themes())                      # themes installed in Keynote
-
-with Presentation.new(theme="Basic White", path="talk.key") as deck:
-    print(deck.layouts)                   # master slides in the theme
-
-    deck[0].update(title="Robots!", body="Kevin McAleer")
-    slide = deck.add_slide(
-        "Title & Bullets",
-        title="Why robots?",
-        body="They're fun\nThey're useful\nThey're everywhere",
-        notes="Keep this one short.",
-    )
-    slide.set_transition("dissolve", duration=1.0)
-    deck.save()
-```
-
-Open an existing deck and read it:
-
-```python
 deck = Presentation.open("talk.key")
-for row in deck.read_slides():            # one call for the whole deck
-    print(row["index"], row["layout"], row["title"])
-deck.theme = "Basic Black"
-deck.slides[2].move_to(0)
-deck.slides[-1].delete()
-deck.save("talk-v2.key")
-deck.close()
+print(deck.theme, deck.size, deck.layouts)
+
+for slide in deck:
+    print(slide.index, slide.layout, slide.title)
+    for para in slide.paragraphs:          # text, indent level, bulleted?
+        print("  " * para.level, para.text)
+    print(slide.notes, slide.transition.effect, slide.skipped)
+
+print(deck.to_markdown())
 ```
 
-### Slides
+`title` and `body` are `None` when the slide's layout hides that placeholder.
 
-`Presentation.slides` returns `Slide` objects that point at positions. After
-adding, deleting or moving slides, fetch them again.
+## Markdown
 
-| Attribute | Notes |
-| --- | --- |
-| `title`, `body`, `notes` | Read and write. The body has one line per bullet. |
-| `layout` | Name of the master slide. Assign a name to change it. |
-| `skipped` | Read and write. |
-| `transition` / `set_transition(effect, duration, delay, automatic)` | Effects are listed in `pykeynote.EFFECTS`. |
-| `read()` / `update(**fields)` | Read or write several fields in one call. |
-| `move_to(index)`, `delete()` | |
+`to_markdown()` writes one block per slide, separated by `---`. Slide
+settings go in HTML comments, and presenter notes follow a `???` line:
+
+```markdown
+<!-- layout: Title & Bullets -->
+<!-- transition: dissolve 1.5s -->
+# Why robots?
+
+- They're fun
+  - Mostly
+- They're useful
+
+???
+Keep this one short.
+```
+
+## Roadmap
+
+1. Read decks and export Markdown. **Done.**
+2. Edit text, notes and images, then save.
+3. Add, delete and reorder slides from bundled templates, and build decks from Markdown.
+4. Themes, transitions and build animations.
+
+## Driving Keynote directly (legacy)
+
+`pykeynote.scripting` controls a running copy of Keynote on a Mac through
+AppleScript and JXA. It can already edit decks, but it will be removed once
+the file-based engine catches up.
 
 ## Tests
 
 ```sh
-pytest                                    # unit tests, run anywhere
+pytest                                    # everything that runs without Keynote
 PYKEYNOTE_INTEGRATION=1 pytest            # also drive real Keynote (macOS)
 ```
 
-The integration tests open and close their own scratch presentations.
-
-## Not yet supported
-
-Build animations on individual slide elements can't be set through Keynote's
-scripting interface. Work on that is planned separately.
+The sample decks in `tests/fixtures/` were made in Keynote 14.5.

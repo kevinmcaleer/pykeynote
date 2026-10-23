@@ -5,7 +5,8 @@ import sys
 
 import pytest
 
-from pykeynote import KeynoteError, Presentation, list_themes
+from pykeynote import KeynoteError
+from pykeynote.scripting import Presentation, list_themes
 
 pytestmark = [
     pytest.mark.keynote,

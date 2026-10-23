@@ -1,8 +1,13 @@
-"""Create, read and edit Apple Keynote presentations from Python."""
+"""Create, read and edit Apple Keynote presentations from Python.
+
+:class:`Presentation` reads ``.key`` files directly, so Keynote isn't needed.
+The older :mod:`pykeynote.scripting` module drives a running copy of Keynote
+on a Mac instead, and will go once the file-based engine can do everything
+it does.
+"""
 
 from ._osa import KeynoteError
-from .presentation import Presentation, Slide, list_themes
-from .transitions import EFFECTS, Transition
+from .document import Paragraph, Presentation, Slide, Transition
 
-__all__ = ["EFFECTS", "KeynoteError", "Presentation", "Slide", "Transition", "list_themes"]
-__version__ = "0.1.0"
+__all__ = ["KeynoteError", "Paragraph", "Presentation", "Slide", "Transition"]
+__version__ = "0.2.0"
