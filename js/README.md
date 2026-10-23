@@ -16,16 +16,16 @@ saved by Keynote up to 14.5.
 ## Install
 
 ```sh
-npm install keynotejs
+npm install @kevsmac/keynotejs
 ```
 
 It needs Node 20.12 or later and ships ES modules with TypeScript types.
-From CommonJS, use `require("keynotejs")` on Node 22, or `await import("keynotejs")`.
+From CommonJS, use `require("@kevsmac/keynotejs")` on Node 22, or `await import("@kevsmac/keynotejs")`.
 
 ## Reading a deck
 
 ```ts
-import { Presentation } from "keynotejs";
+import { Presentation } from "@kevsmac/keynotejs";
 
 const deck = await Presentation.open("talk.key");
 console.log(deck.theme, deck.size, deck.layouts);
@@ -46,7 +46,7 @@ console.log(deck.toMarkdown());
 ## Making and changing decks
 
 ```ts
-import { Presentation, fromMarkdown } from "keynotejs";
+import { Presentation, fromMarkdown } from "@kevsmac/keynotejs";
 import { readFile } from "node:fs/promises";
 
 const deck = await Presentation.create();       // Basic White, 16:9, no slides yet
