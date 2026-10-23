@@ -17,7 +17,7 @@
 import { unzipSync, zipSync, type Zippable } from "fflate";
 
 import { parseIwa, serializeIwa, RawArchive, type Segment } from "./iwa.js";
-import { typeOf, walk, type Message } from "./protobuf.js";
+import { create, typeOf, walk, type Message } from "./protobuf.js";
 
 export const METADATA_ID = 2;
 
@@ -181,7 +181,7 @@ export class Package {
   }
 
   removeFile(name: string): void {
-    for (const identifier of this.idsInFile(name)) this.segments.delete(identifier);
+    for (const identifier of this.iwa.has(name) ? this.idsInFile(name) : []) this.segments.delete(identifier);
     this.iwa.delete(name);
     this.raw.delete(name);
     this.dirty.delete(name);
@@ -209,6 +209,21 @@ export class Package {
     const data = this.raw.get(name);
     if (!data) throw new Error(`no file ${name}`);
     return data;
+  }
+
+  hasFile(name: string): boolean {
+    return this.raw.has(name);
+  }
+
+  /** Whether the package has this .iwa file, e.g. ``"Index/ObjectContainer.iwa"``. */
+  hasArchiveFile(name: string): boolean {
+    return this.iwa.has(name);
+  }
+
+  /** Add or replace a file that isn't an archive, such as an image in ``Data/``. */
+  writeFile(name: string, data: Uint8Array): void {
+    this.raw.set(name, data);
+    this.dirty.delete(name);
   }
 
   // --- saving ---------------------------------------------------------------
@@ -264,4 +279,46 @@ export function newUuidParts(): UuidParts {
   upper = (upper & ~(0xfn << 12n)) | (4n << 12n);
   lower = (lower & ~(0x3n << 62n)) | (0x2n << 62n);
   return [lower, upper];
+}
+
+/** The UUID in a ``TSP.UUID`` as one 128-bit number. */
+export function uuidValue(m: Message): bigint {
+  if (typeOf(m) === "TSP.CFUUIDArchive") {
+    let value = 0n;
+    for (let i = 0; i < 4; i++) value |= BigInt(m[`uuid_w${i}`]) << BigInt(32 * i);
+    return value;
+  }
+  return (BigInt(m.upper) << 64n) | BigInt(m.lower);
+}
+
+/** A 64-bit value as the decoder gives it: a number if it fits a double exactly, else a bigint. */
+export function int64(value: bigint): number | bigint {
+  return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : value;
+}
+
+/** Give a ``TSP.UUID`` a fresh random value. */
+export function setNewUuid(m: Message): void {
+  const [lower, upper] = newUuidParts();
+  m.lower = int64(lower as bigint);
+  m.upper = int64(upper as bigint);
+}
+
+/** A ``TSP.ArchiveInfo`` header for one new archive of the given type and message version. */
+export function makeHeader(identifier: number, type: number, version: number[], refs: Iterable<number> = []): Message {
+  return create("TSP.ArchiveInfo", {
+    identifier,
+    message_infos: [create("TSP.MessageInfo", { type, version: [...version], length: 0, object_references: [...refs] })],
+  });
+}
+
+/** Record a fresh UUID for a new object in its component, as Keynote does for objects it tracks. */
+export function addUuid(component: Message, identifier: number): void {
+  const uuid = create("TSP.UUID");
+  setNewUuid(uuid);
+  component.object_uuid_map_entries.push(create("TSP.ObjectUUIDMapEntry", { identifier, uuid }));
+}
+
+/** The identifiers an archive's header says it refers to. */
+export function headerRefs(pkg: Package, identifier: number): number[] {
+  return pkg.segment(identifier).header.message_infos[0].object_references;
 }

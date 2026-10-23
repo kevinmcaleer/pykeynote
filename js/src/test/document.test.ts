@@ -82,7 +82,9 @@ test("an unchanged save is identical", async () => {
 
 test("toJSON", async () => {
   const deck = await fixture("layouts-basic-white.key");
-  assert.deepEqual(deck.slide(3).toJSON(), {
+  const { drawables, ...rest } = deck.slide(3).toJSON();
+  assert.deepEqual(drawables.map((d) => d.type), ["text box"]);
+  assert.deepEqual(rest, {
     index: 3,
     layout: "Title & Bullets",
     title: "Title & Bullets",
@@ -90,5 +92,6 @@ test("toJSON", async () => {
     notes: "Notes for Title & Bullets",
     skipped: false,
     transition: { effect: null, duration: 1.0, delay: 0.5, automatic: false },
+    images: [],
   });
 });

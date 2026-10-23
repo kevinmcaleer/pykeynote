@@ -19,8 +19,10 @@ saved by Keynote up to 14.5.
 npm install @kevsmac/keynotejs
 ```
 
-It needs Node 20.12 or later and ships ES modules with TypeScript types.
-From CommonJS, use `require("@kevsmac/keynotejs")` on Node 22, or `await import("@kevsmac/keynotejs")`.
+It needs Node 20.12 or later, or a modern browser (see
+[In the browser](#in-the-browser)), and ships ES modules with TypeScript
+types. From CommonJS, use `require("@kevsmac/keynotejs")` on Node 22, or
+`await import("@kevsmac/keynotejs")`.
 
 ## Reading a deck
 
@@ -80,6 +82,42 @@ opened, at least one slide must already use the layout.
 Without the file system, use `Presentation.fromBytes(bytes)` and
 `deck.toBytes()`.
 
+## Images, shapes, tables and charts
+
+```ts
+const slide = deck.addSlide("Blank");
+
+// PNG, JPEG or GIF bytes. A free photo placeholder takes the image;
+// otherwise it goes on top, centred unless you give a position.
+slide.addImage(await readFile("robot.png"), {
+  position: [100, 80], size: [640, null],         // null keeps the picture's shape
+  description: "A robot", name: "robot.png",
+});
+
+const star = slide.addShape("star", { x: 900, y: 100, width: 300, height: 300, text: "New!", fill: "#3366ff" });
+slide.addTextBox("Free text", { x: 100, y: 900, width: 600, height: 80 });
+
+slide.addTable([["Name", "Score"], ["Ada", 42], ["Bob", 3.5]], { headerRows: 1 });
+slide.addChart("column", [[1, 2, 3], [4, 5, 6]], ["2024", "2025"], ["Q1", "Q2", "Q3"],
+  { x: 60, y: 60, width: 900, height: 500 });
+
+slide.addBuild("title", "dissolve");
+slide.addBuild(star, { effect: "move in", duration: 0.5 });
+```
+
+Everything has a sensible default position and size, centred on the slide.
+`slide.images`, `shapes`, `tables`, `charts`, `drawables` and `builds`
+read them back, from your decks and Keynote's alike, and each can be edited:
+`table.setCell(1, 1, 43)`, `table.setRows(rows)`, `chart.setData(...)`,
+`chart.chartType = "bar"`, `shape.text`, `shape.fill`, `shape.position`,
+`shape.size`, `slide.replaceImage(...)`, `slide.deleteDrawable(...)` and
+`slide.clearBuilds()`. `SHAPE_KINDS` and `CHART_TYPES` list the kinds you can
+add. Duplicating a slide gives it its own copies of its tables and charts.
+
+Tables and charts are copied from a deck bundled with the package, which
+`Presentation.create()` and `open()` load for you. With `fromBytes`, call
+`await preload()` once first.
+
 ## Themes
 
 `themes()` lists the bundled themes, each at 16:9 and 4:3. They are
@@ -102,8 +140,9 @@ await talk.save("talk-dark.key");
 `applyTheme` rebuilds each slide on the new theme's layout of the same
 name, or the closest one that shows a title and body where the slide has
 them (see `matchLayout`). Titles and bodies with their indent levels, notes,
-transitions and skipping come along. Builds, images, shapes, text boxes and
-text formatting beyond the layout's own don't.
+transitions, skipping and builds on titles and bodies come along. Images,
+shapes, text boxes, tables, charts and text formatting beyond the layout's
+own don't.
 
 ## Markdown
 
@@ -123,6 +162,42 @@ settings go in HTML comments, and presenter notes follow a `???` line:
 Keep this one short.
 ```
 
+Images are written as `![description](file "x,y wxh")` and tables as pipe
+tables, so a deck survives the trip both ways. Builds are
+`<!-- build: body, dissolve, by bullet, 1s -->` comments. Pass
+`{ imageDir: "images", onImage: (path, data) => ... }` to `toMarkdown` to save
+the pictures, and `{ baseDir }` or `{ images: async (path) => bytes }` to
+`fromMarkdown` to find them again.
+
+## In the browser
+
+keynotejs has no Node-only imports at the top level, so bundlers such as
+Vite and esbuild take it as it is. Read and write bytes instead of files:
+
+```ts
+import { Presentation, preload } from "@kevsmac/keynotejs";
+
+const deck = await Presentation.create();        // fetches the bundled theme
+deck.addSlide("Title", { title: "Made in a browser" });
+const blob = new Blob([deck.toBytes()], { type: "application/x-iwork-keynote-sffkey" });
+
+await preload();                                 // before adding tables or charts to a fromBytes deck
+const opened = Presentation.fromBytes(new Uint8Array(await file.arrayBuffer()));
+```
+
+The bundled decks in `templates/` are fetched relative to the module. If
+your bundler moves them, serve that folder yourself and point keynotejs at it,
+or pass a theme deck's bytes directly:
+
+```ts
+import { setTemplateLoader } from "@kevsmac/keynotejs";
+
+setTemplateLoader(async (file) => new Uint8Array(await (await fetch(`/keynote/${file}`)).arrayBuffer()));
+const deck = await Presentation.create({ template: myThemeBytes });
+```
+
+`open`, `save` and Markdown image files need Node.
+
 ## Development
 
 The template decks and test fixtures are shared with the Python package, in
@@ -131,7 +206,11 @@ The template decks and test fixtures are shared with the Python package, in
 ```sh
 npm install
 npm test
+node scripts/cross-check.mjs     # against pykeynote: pip install -e .. first
 ```
+
+The cross check has both libraries build the same deck and read each other's
+files back. CI runs it on every pull request.
 
 `src/schema.json` is generated from keynote-parser by
 `python scripts/dump_schema.py`.
