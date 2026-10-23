@@ -8,8 +8,12 @@ from dataclasses import dataclass
 from typing import Any, Iterable, List, Optional, Tuple, Union
 
 from . import builds as _builds
+from . import drawables as _drawables
 from . import slides
 from .builds import Build
+from .charts import Chart
+from .drawables import Color, Drawable, Shape
+from .tables import Table
 from .package import Package, PathLike
 from .text import Paragraph, ParagraphInput, Text
 
@@ -217,13 +221,13 @@ class Slide:
 
     def add_build(
         self,
-        target: Union[str, int] = "body",
+        target: Union[str, int, Drawable] = "body",
         effect: str = "dissolve",
         delivery: Optional[str] = None,
         duration: float = 1.0,
         kind: str = "in",
     ) -> Build:
-        """Animate ``target`` ("title", "body", or a drawable's identifier) onto the slide.
+        """Animate ``target`` ("title", "body", a shape, table or chart, or its identifier) onto the slide.
 
         ``delivery`` is "all at once" or "by bullet" (also "by paragraph");
         it defaults to "by bullet" for a body with several paragraphs. Each
@@ -237,6 +241,76 @@ class Slide:
         """Remove every build from the slide."""
         _builds.clear_builds(self)
 
+    # --- shapes, tables and charts ---------------------------------------------
+
+    @property
+    def drawables(self) -> List[Drawable]:
+        """Shapes, text boxes, tables and charts on the slide, back to front (not the title or body)."""
+        return _drawables.drawables_of(self)
+
+    @property
+    def shapes(self) -> List[Shape]:
+        """Shapes and text boxes."""
+        return [d for d in self.drawables if isinstance(d, Shape)]
+
+    @property
+    def tables(self) -> List[Table]:
+        return [d for d in self.drawables if isinstance(d, Table)]
+
+    @property
+    def charts(self) -> List[Chart]:
+        return [d for d in self.drawables if isinstance(d, Chart)]
+
+    def _default_frame(self, width: Optional[float], height: Optional[float], x: Optional[float], y: Optional[float], w0: float, h0: float) -> Tuple[float, float, float, float]:
+        sw, sh = self.presentation.size
+        width = w0 if width is None else width
+        height = h0 if height is None else height
+        x = (sw - width) / 2 if x is None else x
+        y = (sh - height) / 2 if y is None else y
+        return float(x), float(y), float(width), float(height)
+
+    def add_shape(
+        self,
+        kind: str = "rectangle",
+        x: Optional[float] = None,
+        y: Optional[float] = None,
+        width: Optional[float] = None,
+        height: Optional[float] = None,
+        text: Union[None, str, Iterable[ParagraphInput]] = None,
+        fill: Optional[Color] = None,
+        style: int = 0,
+    ) -> Shape:
+        """Add a shape, in the middle of the slide unless ``x`` and ``y`` are given.
+
+        ``kind`` is one of :data:`pykeynote.drawables.SHAPE_KINDS`, such as
+        ``"rectangle"``, ``"rounded rectangle"``, ``"oval"``, ``"triangle"``,
+        ``"star"`` or ``"arrow"``. ``style`` picks one of the theme's six shape
+        styles (0 to 5); ``fill`` overrides its colour, e.g. ``"#3366ff"``.
+        Positions and sizes are in points from the slide's top left.
+        """
+        x, y, width, height = self._default_frame(width, height, x, y, 400, 300)
+        return _drawables.add_shape(self, kind, x, y, width, height, text=text, style=style, fill=fill)
+
+    def add_text_box(
+        self,
+        text: Union[str, Iterable[ParagraphInput]],
+        x: Optional[float] = None,
+        y: Optional[float] = None,
+        width: Optional[float] = None,
+        height: Optional[float] = None,
+    ) -> Shape:
+        """Add a text box in the theme's text box style."""
+        x, y, width, height = self._default_frame(width, height, x, y, 600, 80)
+        return _drawables.add_shape(self, "text box", x, y, width, height, text=text)
+
+    def delete_drawable(self, drawable: Drawable) -> None:
+        """Remove a shape, text box, table or chart from the slide."""
+        if drawable.slide._slide_id != self._slide_id:
+            raise ValueError("that drawable is on another slide")
+        if any(b.target == drawable.identifier for b in self.builds):
+            raise ValueError("remove the drawable's builds first (clear_builds)")
+        _drawables.delete_drawable(self, drawable)
+
     def to_dict(self) -> dict:
         t = self.transition
         return {
@@ -247,6 +321,7 @@ class Slide:
             "notes": self.notes,
             "skipped": self.skipped,
             "transition": {"effect": t.effect, "duration": t.duration, "delay": t.delay, "automatic": t.automatic},
+            "drawables": [d.to_dict() for d in self.drawables],
         }
 
 

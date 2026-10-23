@@ -103,6 +103,7 @@ def read_builds(slide: "Slide") -> List[Build]:
 def _resolve_target(slide: "Slide", target: Target) -> int:
     s = slide._slide
     shown = {r.identifier for r in s.drawables_z_order}
+    target = getattr(target, "identifier", target)  # a Shape, Table or Chart
     if target in ("title", "body"):
         field = "titlePlaceholder" if target == "title" else "bodyPlaceholder"
         if not s.HasField(field) or getattr(s, field).identifier not in shown:
@@ -135,6 +136,7 @@ def add_build(
     p = slide._package
     s = slide._slide
     drawable_id = _resolve_target(slide, target)
+    target = drawable_id if not isinstance(target, str) else target
     if kind not in _KINDS:
         raise ValueError(f"kind must be 'in' or 'out', not {kind!r}")
     is_body = target == "body"
