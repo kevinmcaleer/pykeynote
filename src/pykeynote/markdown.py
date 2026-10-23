@@ -181,7 +181,7 @@ def parse_markdown(text: str) -> List[SlideSpec]:
     return specs
 
 
-def from_markdown(text: str, theme: str = "Basic White") -> "Presentation":
+def from_markdown(text: str, theme: str = "Basic White", aspect: str = "16:9") -> "Presentation":
     """Build a new presentation from Markdown in the :func:`to_markdown` format.
 
     A slide without a ``layout`` comment gets one from its content: title and
@@ -189,7 +189,7 @@ def from_markdown(text: str, theme: str = "Basic White") -> "Presentation":
     """
     from .document import Presentation
 
-    deck = Presentation.new(theme)
+    deck = Presentation.new(theme, aspect)
     available = set(deck.layouts)
     for spec in parse_markdown(text):
         layout = spec.layout or spec.default_layout()

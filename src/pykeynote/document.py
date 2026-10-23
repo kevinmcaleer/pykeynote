@@ -223,14 +223,26 @@ class Slide:
 TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
 
 
-def _template_file(theme: str) -> str:
-    return theme.strip().lower().replace(" ", "-") + ".key"
+# Bundled templates are named "<theme>-<aspect>.key", e.g. "basic-white-16x9.key".
+ASPECTS = ("16:9", "4:3")
+
+
+def _template_file(theme: str, aspect: str) -> str:
+    return theme.strip().lower().replace(" ", "-") + "-" + aspect.replace(":", "x") + ".key"
+
+
+def _bundled() -> List[Tuple[str, str]]:
+    out = []
+    for f in sorted(os.listdir(TEMPLATES_DIR)):
+        if f.endswith(".key"):
+            name, _, aspect = f[:-4].rpartition("-")
+            out.append((name.replace("-", " ").title(), aspect.replace("x", ":")))
+    return out
 
 
 def themes() -> List[str]:
     """Names of the themes bundled with pykeynote, for :meth:`Presentation.new`."""
-    names = sorted(f[:-4] for f in os.listdir(TEMPLATES_DIR) if f.endswith(".key"))
-    return [n.replace("-", " ").title() for n in names]
+    return sorted({name for name, _ in _bundled()})
 
 
 def _reparse(package: Package) -> Package:
@@ -258,11 +270,18 @@ class Presentation:
         return cls(Package.open(full), full)
 
     @classmethod
-    def new(cls, theme: str = "Basic White") -> "Presentation":
-        """A new, empty presentation in one of the bundled themes (see :func:`themes`)."""
-        path = os.path.join(TEMPLATES_DIR, _template_file(theme))
+    def new(cls, theme: str = "Basic White", aspect: str = "16:9") -> "Presentation":
+        """A new, empty presentation in one of the bundled themes (see :func:`themes`).
+
+        ``aspect`` is ``"16:9"`` (1920 x 1080, Keynote's Wide) or ``"4:3"``
+        (1024 x 768, Keynote's Standard).
+        """
+        if aspect not in ASPECTS:
+            raise ValueError(f"aspect must be one of {', '.join(ASPECTS)}, not {aspect!r}")
+        path = os.path.join(TEMPLATES_DIR, _template_file(theme, aspect))
         if not os.path.exists(path):
-            raise ValueError(f"no bundled theme {theme!r}; choose from {', '.join(themes())}")
+            available = ", ".join(f"{n} ({a})" for n, a in _bundled())
+            raise ValueError(f"no bundled theme {theme!r} at {aspect}; available: {available}")
         pres = cls(Package.open(path))
         pres._prototypes = set(pres._node_ids(include_prototypes=True))
         return pres

@@ -212,3 +212,30 @@ quote over lines
     assert len(specs) == 2
     assert specs[0].layout == "Quote"
     assert [p.text for p in specs[0].paragraphs] == ["A long quote over lines", "# not a heading"]
+
+
+@pytest.mark.parametrize("aspect, size", [("16:9", (1920, 1080)), ("4:3", (1024, 768))])
+def test_new_presentation_aspect(tmp_path, aspect, size):
+    deck = Presentation.new(aspect=aspect)
+    deck.add_slide("Title & Bullets", title="Shape", body="One\nTwo")
+    again = reopen(deck, tmp_path)
+    assert again.size == size
+    assert again[0].title == "Shape"
+    check_consistent(again)
+
+
+def test_new_presentation_defaults_to_widescreen():
+    assert Presentation.new().size == (1920, 1080)
+    assert from_markdown("# Hi").size == (1920, 1080)
+    assert from_markdown("# Hi", aspect="4:3").size == (1024, 768)
+
+
+def test_new_presentation_bad_aspect():
+    with pytest.raises(ValueError, match="aspect"):
+        Presentation.new(aspect="21:9")
+
+
+def test_widescreen_markdown_round_trip(tmp_path):
+    md = Presentation.open(FIXTURES / "layouts-basic-white-wide.key").to_markdown()
+    again = reopen(from_markdown(md), tmp_path)
+    assert again.to_markdown() == md
