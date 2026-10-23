@@ -1,15 +1,29 @@
 /** Read and write Keynote presentations straight from the .key file, without Keynote. */
 
-import { readFile, readdir, stat, writeFile } from "node:fs/promises";
-import { readdirSync } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
-
-import { toMarkdown } from "./markdown.js";
-import { Package } from "./package.js";
-import { clear, ensure, enumValue, has, sub, type Message } from "./protobuf.js";
+import * as builds from "./builds.js";
+import { CHART_TYPES, Chart, addChart, copyChart, type AddChartOptions } from "./charts.js";
+import { Importer, ownedObjects, removeObjects } from "./clone.js";
+import {
+  Drawable,
+  Shape,
+  addExternalReference,
+  addShape,
+  componentIdOf,
+  removeExternalReference,
+  removeFromSlide,
+  type Color,
+} from "./drawables.js";
+import { toMarkdown, type ToMarkdownOptions } from "./markdown.js";
+import * as media from "./media.js";
+import { Package, remapReferences } from "./package.js";
+import { clear, create, ensure, enumValue, has, sub, typeOf, type Message } from "./protobuf.js";
 import * as slides from "./slides.js";
+import { Table, addTable, copyTable, type AddTableOptions, type CellValue } from "./tables.js";
+import { ASPECTS, loadTemplate, partsPackage, preload, templateFile, type Aspect } from "./templates.js";
 import { Text, type Paragraph, type ParagraphInput } from "./text.js";
+
+export type { Aspect } from "./templates.js";
+export { themes } from "./templates.js";
 
 /** A slide's transition. ``effect`` is ``null`` when there is no transition. */
 export interface Transition {
@@ -51,11 +65,16 @@ const TRANSITION_ENUMS = "KN.TransitionAttributesArchive.TransitionCustomAttribu
 
 /** One slide, read from the file. */
 export class Slide {
-  private readonly pkg: Package;
-  private readonly nodeId: number;
-  private readonly node: Message;
-  private readonly slideId: number;
-  private readonly slide: Message;
+  /** @internal */
+  readonly pkg: Package;
+  /** @internal */
+  readonly nodeId: number;
+  /** @internal */
+  readonly node: Message;
+  /** @internal */
+  readonly slideId: number;
+  /** @internal */
+  readonly slide: Message;
 
   constructor(
     readonly presentation: Presentation,
@@ -210,6 +229,163 @@ export class Slide {
     return this.slide.builds.length > 0;
   }
 
+  /** The slide's build animations, in the order they play. */
+  get builds(): builds.Build[] {
+    return builds.readBuilds(this);
+  }
+
+  /**
+   * Animate ``target`` onto the slide: ``"title"``, ``"body"``, a shape,
+   * image, table or chart, or its identifier.
+   *
+   * ``effect`` is a build effect such as ``"dissolve"`` (the default) or
+   * ``"move in"``, or options with ``delivery`` (``"all at once"`` or ``"by
+   * bullet"``, the default for a body with several paragraphs), ``duration``
+   * and ``kind`` (``"in"`` or ``"out"``). Each build plays after the ones
+   * added before it, one click per step.
+   */
+  addBuild(target: builds.BuildTarget = "body", effect: string | builds.BuildOptions = {}): builds.Build {
+    return builds.addBuild(this, target, typeof effect === "string" ? { effect } : effect);
+  }
+
+  /** Remove every build from the slide. */
+  clearBuilds(): void {
+    builds.clearBuilds(this);
+  }
+
+  // --- shapes, tables and charts ---------------------------------------------
+
+  /** Shapes, text boxes, tables and charts on the slide, back to front (not the title, body or images). */
+  get drawables(): Drawable[] {
+    return drawablesOf(this);
+  }
+
+  /** Shapes and text boxes. */
+  get shapes(): Shape[] {
+    return this.drawables.filter((d): d is Shape => d instanceof Shape);
+  }
+
+  get tables(): Table[] {
+    return this.drawables.filter((d): d is Table => d instanceof Table);
+  }
+
+  get charts(): Chart[] {
+    return this.drawables.filter((d): d is Chart => d instanceof Chart);
+  }
+
+  private defaultFrame(frame: FrameOptions, w0: number, h0: number): [number, number, number, number] {
+    const { width: sw, height: sh } = this.presentation.size;
+    const width = frame.width ?? w0;
+    const height = frame.height ?? h0;
+    return [frame.x ?? (sw - width) / 2, frame.y ?? (sh - height) / 2, width, height];
+  }
+
+  /**
+   * Add a shape, in the middle of the slide unless ``x`` and ``y`` are given.
+   *
+   * ``kind`` is one of {@link SHAPE_KINDS}, such as ``"rectangle"``,
+   * ``"rounded rectangle"``, ``"oval"``, ``"triangle"``, ``"star"`` or
+   * ``"arrow"``. ``style`` picks one of the theme's six shape styles (0 to
+   * 5); ``fill`` overrides its colour, e.g. ``"#3366ff"``. Positions and
+   * sizes are in points from the slide's top left.
+   */
+  addShape(kind = "rectangle", options: AddShapeOptions = {}): Shape {
+    const [x, y, width, height] = this.defaultFrame(options, 400, 300);
+    return addShape(this, kind, x, y, width, height, { text: options.text, style: options.style, fill: options.fill });
+  }
+
+  /** Add a text box in the theme's text box style. */
+  addTextBox(text: string | Iterable<ParagraphInput>, options: FrameOptions = {}): Shape {
+    const [x, y, width, height] = this.defaultFrame(options, 600, 80);
+    return addShape(this, "text box", x, y, width, height, { text });
+  }
+
+  /**
+   * Add a chart of ``rows`` of values, one list per row name.
+   *
+   * ``chartType`` is one of {@link CHART_TYPES}: ``"column"``, ``"bar"``,
+   * ``"line"``, ``"area"``, ``"pie"``, ``"donut"``, their ``"stacked"``
+   * forms or ``"scatter"``. Each row is a data series unless ``seriesBy``
+   * is ``"column"``, the default for pies and donuts: Keynote draws a pie
+   * from the first value of each series, so the first row's values become
+   * the slices. Pies are kept square. ``style`` picks one of the theme's six
+   * chart styles; the legend shows when there is more than one series
+   * unless ``legend`` says.
+   */
+  addChart(chartType: keyof typeof CHART_TYPES, rows: (number | null)[][], rowNames: string[], columnNames: string[], options: AddChartOptions = {}): Chart {
+    const frame = this.defaultFrame(options, 900, 640);
+    return addChart(this, chartType, rows, rowNames, columnNames, partsPackage(), frame, options);
+  }
+
+  /**
+   * Add a table of ``rows``: arrays of text, numbers, ``true``/``false`` or ``null`` for an empty cell.
+   *
+   * The first ``headerRows`` rows (1 unless given) and ``headerColumns``
+   * columns are headers. ``style`` picks one of the theme's six table
+   * styles. The table is centred unless ``x`` and ``y`` are given; each row
+   * is 64 points high unless ``height`` is given.
+   */
+  addTable(rows: CellValue[][], options: AddTableOptions = {}): Table {
+    const nRows = rows.length;
+    const nCols = Math.max(0, ...rows.map((r) => r.length));
+    const { width: sw, height: sh } = this.presentation.size;
+    const width = options.width ?? Math.min(sw - 120, 300.0 * Math.max(nCols, 1));
+    const height = options.height ?? 64.0 * Math.max(nRows, 1);
+    const x = options.x ?? (sw - width) / 2;
+    const y = options.y ?? (sh - height) / 2;
+    return addTable(this, rows, partsPackage(), x, y, { ...options, width, height });
+  }
+
+  /** Remove a shape, text box, table or chart from the slide. */
+  deleteDrawable(drawable: Drawable): void {
+    if (drawable.slide.slideId !== this.slideId) throw new Error("that drawable is on another slide");
+    if (this.builds.some((b) => b.target === drawable.identifier)) throw new Error("remove the drawable's builds first (clearBuilds)");
+    deleteDrawable(this, drawable);
+  }
+
+  // --- images ------------------------------------------------------------------
+
+  /** The slide's images, back to front, including media placeholders. */
+  get images(): media.Image[] {
+    return media.readImages(this);
+  }
+
+  /** The layout's media placeholders on this slide, left to right and top to bottom. */
+  get placeholders(): media.Image[] {
+    return media.placeholders(this);
+  }
+
+  /**
+   * Add a PNG, JPEG or GIF image from its bytes.
+   *
+   * With no ``position`` or ``size``, the image fills the slide's first
+   * media placeholder that still shows the theme's sample photo, cropped to
+   * it as Keynote does. Otherwise, or with ``placeholder: false``, it goes
+   * on top of everything else: at ``position`` (top left, in points),
+   * ``size`` wide and high (give one as ``null`` to keep the picture's
+   * shape), and centred if no position is given. ``placeholder`` can also
+   * name a placeholder, e.g. ``"Media-2"``.
+   */
+  addImage(source: media.ImageSource, options: media.AddImageOptions = {}): media.Image {
+    return media.addImage(this, source, options);
+  }
+
+  /**
+   * Put a new picture in place of ``image``: an {@link Image}, its index in
+   * {@link images}, or a placeholder tag.
+   *
+   * A cropped image (such as a placeholder) keeps its crop, with the new
+   * picture scaled to cover it. Otherwise the picture fits inside the old one's frame.
+   */
+  replaceImage(image: media.ImageTarget, source: media.ImageSource, options: { description?: string; name?: string } = {}): media.Image {
+    return media.replaceImage(this, image, source, options);
+  }
+
+  /** Delete an image, and any builds on it. */
+  removeImage(image: media.ImageTarget): void {
+    media.removeImage(this, image);
+  }
+
   toJSON() {
     const t = this.transition;
     return {
@@ -220,40 +396,98 @@ export class Slide {
       notes: this.notes,
       skipped: this.skipped,
       transition: { effect: t.effect, duration: t.duration, delay: t.delay, automatic: t.automatic },
+      drawables: this.drawables.map((d) => d.toJSON()),
+      images: this.images.map((i) => ({
+        position: i.position,
+        size: i.size,
+        description: i.description,
+        placeholder: i.placeholder,
+        filename: i.filename,
+      })),
     };
   }
 }
 
-const TEMPLATES_DIR = fileURLToPath(new URL("../templates/", import.meta.url));
-
-/** Slide sizes for new presentations: ``"16:9"`` is 1920 x 1080 (Wide), ``"4:3"`` is 1024 x 768 (Standard). */
-export type Aspect = "16:9" | "4:3";
-const ASPECTS: Aspect[] = ["16:9", "4:3"];
-
-// Bundled templates are named "<theme>-<aspect>.key", e.g. "basic-white-16x9.key".
-function templateFile(theme: string, aspect: string): string {
-  return theme.trim().toLowerCase().replaceAll(" ", "-") + "-" + aspect.replace(":", "x") + ".key";
+/** Where to put a drawable, in points from the slide's top left. Centred when ``x`` and ``y`` aren't given. */
+export interface FrameOptions {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
 }
 
-function bundled(): [string, string][] {
-  return readdirSync(TEMPLATES_DIR)
-    .filter((f) => f.endsWith(".key"))
-    .sort()
-    .map((f) => {
-      const stem = f.slice(0, -4);
-      const cut = stem.lastIndexOf("-");
-      const name = stem
-        .slice(0, cut)
-        .split("-")
-        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-        .join(" ");
-      return [name, stem.slice(cut + 1).replace("x", ":")];
-    });
+export interface AddShapeOptions extends FrameOptions {
+  text?: string | Iterable<ParagraphInput>;
+  /** One of the theme's six shape styles, 0 to 5. */
+  style?: number;
+  fill?: Color;
 }
 
-/** Names of the themes bundled with keynotejs, for {@link Presentation.create}. */
-export function themes(): string[] {
-  return [...new Set(bundled().map(([name]) => name))].sort();
+/** Every drawable on the slide besides its placeholders and images, back to front. */
+function drawablesOf(slide: Slide): Drawable[] {
+  const p = slide.pkg;
+  const out: Drawable[] = [];
+  for (const ref of slide.slide.drawables_z_order as Message[]) {
+    if (!p.has(ref.identifier)) continue;
+    let name: string;
+    try {
+      name = typeOf(p.get(ref.identifier));
+    } catch {
+      continue;
+    }
+    if (name === "TSWP.ShapeInfoArchive") out.push(new Shape(slide, ref.identifier));
+    else if (name === "TST.TableInfoArchive") out.push(new Table(slide, ref.identifier));
+    else if (name === "TSCH.ChartDrawableArchive") out.push(new Chart(slide, ref.identifier));
+  }
+  return out;
+}
+
+/** Remove a drawable and everything it owns, wherever in the package that is. */
+function deleteDrawable(slide: Slide, drawable: Drawable): void {
+  drawable.beforeDelete();
+  removeFromSlide(slide, drawable.identifier);
+  const ids = ownedObjects(slide.pkg, drawable.identifier, new Set([slide.slideId]));
+  ids.push(...drawable.ownedElsewhere(ids));
+  removeObjects(slide.pkg, ids);
+}
+
+/**
+ * Give a duplicated slide its own copies of the original's tables and charts.
+ *
+ * Copying a slide's file copies its shapes, but tables and charts keep
+ * objects in other files, which the copy would otherwise share.
+ */
+function unshareDrawables(original: Slide, copy: Slide): void {
+  const copies = copy.drawables;
+  const pairs = original.drawables
+    .map((d, i): [Drawable, Drawable] => [d, copies[i]])
+    .filter(([a, b]) => b !== undefined && (a instanceof Table || a instanceof Chart));
+  if (!pairs.length) return;
+  const p = copy.pkg;
+  const importer = new Importer(p, p);
+  const s = copy.slide;
+  for (const [old, alias] of pairs) {
+    const fresh = old instanceof Table ? copyTable(importer, old.identifier, original.slideId, copy) : copyChart(importer, old.identifier, original.slideId, copy);
+    remapReferences(s, new Map([[alias.identifier, fresh.identifier]])); // drawables, z-order and the like
+    for (const buildRef of s.builds as Message[]) {
+      const build = p.deref(buildRef);
+      if (build.drawable.identifier === alias.identifier) {
+        build.drawable.identifier = fresh.identifier;
+        p.markChanged(buildRef.identifier);
+      }
+    }
+    p.removeObjectReference(copy.slideId, alias.identifier);
+    p.addObjectReference(copy.slideId, fresh.identifier);
+    const component = p.component(componentIdOf(p, copy.slideId));
+    removeExternalReference(p, component, alias.identifier);
+    addExternalReference(p, component, fresh.identifier);
+    if (alias.identifier !== old.identifier) {
+      // The chart itself was copied with the slide's file: drop that copy and what only it owns.
+      const slideFile = p.fileOf(copy.slideId);
+      removeObjects(p, ownedObjects(p, alias.identifier, new Set([copy.slideId])).filter((i) => p.fileOf(i) === slideFile));
+    }
+  }
+  p.markChanged(copy.slideId);
 }
 
 export interface CreateOptions {
@@ -261,6 +495,8 @@ export interface CreateOptions {
   theme?: string;
   /** Defaults to ``"16:9"``. */
   aspect?: Aspect;
+  /** The bundled theme deck's bytes, if you've loaded them yourself; ``theme`` and ``aspect`` are then ignored. */
+  template?: Uint8Array;
 }
 
 export interface ApplyThemeOptions {
@@ -278,16 +514,38 @@ export interface AddSlideOptions {
   index?: number;
 }
 
+// Node's modules, loaded only when a file path is used, so the rest works in a browser.
+// A variable keeps bundlers from trying to include them in browser builds.
+async function node(): Promise<{ fs: typeof import("node:fs/promises"); path: typeof import("node:path") }> {
+  const fsName = "node:fs/promises";
+  const pathName = "node:path";
+  try {
+    return { fs: await import(/* @vite-ignore */ fsName), path: await import(/* @vite-ignore */ pathName) };
+  } catch {
+    throw new Error("reading and writing files needs Node; in a browser use Presentation.fromBytes() and toBytes()");
+  }
+}
+
 async function readPackage(path: string): Promise<Package> {
-  if (!(await stat(path)).isDirectory()) return Package.fromBytes(await readFile(path));
+  const { fs, path: paths } = await node();
+  if (!(await fs.stat(path)).isDirectory()) return Package.fromBytes(new Uint8Array(await fs.readFile(path)));
   // Older .key files can be folders rather than zips.
   const files = new Map<string, Uint8Array>();
-  for (const entry of await readdir(path, { recursive: true, withFileTypes: true })) {
+  for (const entry of await fs.readdir(path, { recursive: true, withFileTypes: true })) {
     if (!entry.isFile()) continue;
-    const full = join(entry.parentPath, entry.name);
-    files.set(relative(path, full).split(sep).join("/"), await readFile(full));
+    const full = paths.join(entry.parentPath, entry.name);
+    files.set(paths.relative(path, full).split(paths.sep).join("/"), new Uint8Array(await fs.readFile(full)));
   }
   return new Package(files);
+}
+
+/** Load the parts deck for tables and charts, without failing if it can't be had. */
+async function tryPreload(): Promise<void> {
+  try {
+    await preload();
+  } catch {
+    // addTable() and addChart() say so if they're used.
+  }
 }
 
 /** A Keynote presentation read from a ``.key`` file. Keynote isn't needed. */
@@ -309,13 +567,19 @@ export class Presentation {
     this.show = pkg.get(this.showId);
   }
 
-  /** Open a ``.key`` file. */
+  /** Open a ``.key`` file (Node only; in a browser use {@link fromBytes}). */
   static async open(path: string): Promise<Presentation> {
-    const full = resolve(path);
-    return new Presentation(await readPackage(full), full);
+    const { path: paths } = await node();
+    const full = paths.resolve(path);
+    const [pkg] = await Promise.all([readPackage(full), tryPreload()]);
+    return new Presentation(pkg, full);
   }
 
-  /** Read a ``.key`` file from its bytes, e.g. from an upload or a fetch(). */
+  /**
+   * Read a ``.key`` file from its bytes, e.g. from an upload or a fetch().
+   *
+   * To add tables or charts to it, ``await preload()`` once first.
+   */
   static fromBytes(bytes: Uint8Array): Presentation {
     return new Presentation(Package.fromBytes(bytes));
   }
@@ -325,16 +589,7 @@ export class Presentation {
     const theme = options.theme ?? "Basic White";
     const aspect = options.aspect ?? "16:9";
     if (!ASPECTS.includes(aspect)) throw new Error(`aspect must be one of ${ASPECTS.join(", ")}, not "${aspect}"`);
-    const path = join(TEMPLATES_DIR, templateFile(theme, aspect));
-    let bytes: Uint8Array;
-    try {
-      bytes = await readFile(path);
-    } catch {
-      const available = bundled()
-        .map(([n, a]) => `${n} (${a})`)
-        .join(", ");
-      throw new Error(`no bundled theme "${theme}" at ${aspect}; available: ${available}`);
-    }
+    const [bytes] = await Promise.all([options.template ?? loadTemplate(templateFile(theme, aspect)), tryPreload()]);
     const pres = Presentation.fromBytes(bytes);
     pres.prototypes = new Set(pres.nodeIds(true));
     return pres;
@@ -393,6 +648,11 @@ export class Presentation {
 
   deleteSlide(index: number): void {
     index = this.checkIndex(index);
+    const slide = this.slides[index];
+    // Tables and charts keep objects outside the slide's own file; remove those first.
+    for (const drawable of slide.drawables) {
+      if (drawable instanceof Table || drawable instanceof Chart) deleteDrawable(slide, drawable);
+    }
     slides.deleteSlide(this.package, this.showId, this.treeIndex(index));
   }
 
@@ -408,7 +668,9 @@ export class Presentation {
     const visible = this.nodeIds();
     const treeTo = to >= visible.length ? full.length : full.indexOf(visible[to]);
     slides.duplicateSlide(this.package, this.showId, full.indexOf(nodeId), treeTo);
-    return this.slides[to];
+    const copy = this.slides[to];
+    unshareDrawables(new Slide(this, create("TSP.Reference", { identifier: nodeId }), -1), copy);
+    return copy;
   }
 
   /**
@@ -503,9 +765,9 @@ export class Presentation {
    *
    * Each slide is rebuilt on the new theme's layout with the same name, or
    * the closest match (see {@link matchLayout}), and keeps its title and
-   * body text with indent levels, presenter notes, transition and skipped
-   * flag. Builds, images, shapes, text boxes and text formatting that
-   * differs from the layout's own are not carried over.
+   * body text with indent levels, presenter notes, transition, skipped
+   * flag, and builds on its title and body. Images, shapes, text boxes and
+   * text formatting that differs from the layout's own are not carried over.
    */
   async applyTheme(theme: string, options: ApplyThemeOptions = {}): Promise<void> {
     let aspect = options.aspect;
@@ -530,6 +792,11 @@ export class Presentation {
       const t = old.transition;
       slide.setTransition(t.effectId, { duration: t.duration, delay: t.delay, automatic: t.automatic });
       slide.skipped = old.skipped;
+      for (const b of old.builds) {
+        if (typeof b.target !== "string" || (b.target === "title" ? slide.titleText : slide.bodyText) === null) continue;
+        const delivery = b.delivery.toLowerCase() in builds.DELIVERY_NAMES ? b.delivery.toLowerCase() : undefined;
+        slide.addBuild(b.target, { effect: b.effectId, delivery, duration: b.duration, kind: b.kind });
+      }
       slide.touched();
     }
     this.package = target.package;
@@ -538,8 +805,9 @@ export class Presentation {
     this.prototypes = target.prototypes;
   }
 
-  toMarkdown(): string {
-    return toMarkdown(this);
+  /** The presentation as Markdown (see ``toMarkdown``). */
+  toMarkdown(options: ToMarkdownOptions = {}): string {
+    return toMarkdown(this, options);
   }
 
   /** The presentation as ``.key`` file bytes. */
@@ -558,11 +826,12 @@ export class Presentation {
     return pkg.toBytes();
   }
 
-  /** Write the presentation as a ``.key`` file, to ``path`` or back where it came from. */
+  /** Write the presentation as a ``.key`` file, to ``path`` or back where it came from (Node only; in a browser use {@link toBytes}). */
   async save(path?: string): Promise<void> {
     const target = path ?? this.path;
     if (target == null) throw new Error("no path to save to");
-    await writeFile(target, this.toBytes());
-    this.path = resolve(target);
+    const { fs, path: paths } = await node();
+    await fs.writeFile(target, this.toBytes());
+    this.path = paths.resolve(target);
   }
 }
