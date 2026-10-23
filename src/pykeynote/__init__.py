@@ -7,9 +7,10 @@ it does.
 """
 
 from ._osa import KeynoteError
+from .builds import Build
 from .document import Presentation, Slide, Transition, themes
 from .markdown import from_markdown, parse_markdown
 from .text import Paragraph, UnsupportedTextError
 
-__all__ = ["KeynoteError", "Paragraph", "Presentation", "Slide", "Transition", "UnsupportedTextError", "from_markdown", "parse_markdown", "themes"]
+__all__ = ["Build", "KeynoteError", "Paragraph", "Presentation", "Slide", "Transition", "UnsupportedTextError", "from_markdown", "parse_markdown", "themes"]
 __version__ = "0.2.0"

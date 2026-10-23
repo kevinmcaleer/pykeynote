@@ -146,3 +146,21 @@ def test_new_deck_size_in_keynote(tmp_path, open_in_keynote, aspect, size):
     from_markdown(MARKDOWN, aspect=aspect).save(out)
     info = open_in_keynote(out).info()
     assert (info["width"], info["height"]) == size
+
+
+def test_builds_survive_keynote(tmp_path, open_in_keynote):
+    deck = Presentation.new()
+    slide = deck.add_slide("Title & Bullets", title="Builds", body="One\nTwo\nThree")
+    slide.add_build("title", "move in")
+    slide.add_build("body", "dissolve")
+    out = tmp_path / "builds.key"
+    deck.save(out)
+
+    live = open_in_keynote(out)
+    resaved = tmp_path / "builds-resaved.key"
+    live.save(resaved)
+    builds = Presentation.open(resaved)[0].builds
+    assert [(b.target, b.effect, b.delivery, b.steps) for b in builds] == [
+        ("title", "move in", "All at Once", 1),
+        ("body", "dissolve", "By Paragraph", 3),
+    ]

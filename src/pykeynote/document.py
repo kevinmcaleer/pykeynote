@@ -7,9 +7,12 @@ import re
 from dataclasses import dataclass
 from typing import Any, Iterable, List, Optional, Tuple, Union
 
+from . import builds as _builds
 from . import slides
+from .builds import Build
 from .package import Package, PathLike
 from .text import Paragraph, ParagraphInput, Text
+
 
 @dataclass(frozen=True)
 class Transition:
@@ -206,6 +209,33 @@ class Slide:
     @property
     def has_builds(self) -> bool:
         return len(self._slide.builds) > 0
+
+    @property
+    def builds(self) -> List[Build]:
+        """The slide's build animations, in the order they were added."""
+        return _builds.read_builds(self)
+
+    def add_build(
+        self,
+        target: Union[str, int] = "body",
+        effect: str = "dissolve",
+        delivery: Optional[str] = None,
+        duration: float = 1.0,
+        kind: str = "in",
+    ) -> Build:
+        """Animate ``target`` ("title", "body", or a drawable's identifier) onto the slide.
+
+        ``delivery`` is "all at once" or "by bullet" (also "by paragraph");
+        it defaults to "by bullet" for a body with several paragraphs. Each
+        build plays after the ones added before it, one click per step.
+        ``effect`` is a build effect such as "dissolve" or "move in", or
+        Keynote's own id such as "apple:dissolve character".
+        """
+        return _builds.add_build(self, target, effect, delivery, duration, kind)
+
+    def clear_builds(self) -> None:
+        """Remove every build from the slide."""
+        _builds.clear_builds(self)
 
     def to_dict(self) -> dict:
         t = self.transition
