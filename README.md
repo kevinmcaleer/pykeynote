@@ -245,9 +245,21 @@ pykeynote delete talk.key -1
 pykeynote build talk.key 1 --target body --effect dissolve
 pykeynote theme talk.key "Basic Black" --layout Quote=Statement
 pykeynote themes
+pykeynote image talk.key 2 robot.png --alt "A robot arm"   # fills the media placeholder if there is one
+pykeynote image talk.key 2 arm.png --x 100 --y 200 --width 600
+pykeynote image talk.key 2 new.png --replace Media      # or an image id from 'show'
+pykeynote shape talk.key 1 --kind star --text "New!" --fill "#ff3366" --x 1500 --y 100 --width 300 --height 300
+pykeynote textbox talk.key 1 "Source: our survey" --x 100 --y 980
+pykeynote table talk.key 3 --csv scores.csv             # or --row Name,Score --row Ada,3
+pykeynote chart talk.key 4 column --csv sales.csv       # column names in row 1, row names in column 1
+pykeynote build talk.key 4 --target 2655081             # build an object in, by its id from 'show'
+pykeynote remove talk.key 4 2655081                     # delete a shape, table, chart or image
 ```
 
-Slide indexes start at 0, and negative ones count from the end. Each
+Slide indexes start at 0, and negative ones count from the end. `show`
+lists each shape, table, chart and image with an id, which `build --target`
+and `remove` take. Positions and sizes are in points from the slide's top
+left; anything placed without `--x` and `--y` is centred. Each
 `--body` is one paragraph; two leading spaces indent it one level. Editing
 commands save the deck in place unless you pass `-o other.key`. pykeynote
 only writes `.key` files.
@@ -259,8 +271,9 @@ server over stdio, so Claude and other MCP clients can read and edit decks.
 It has no extra dependencies, and needs a pykeynote release newer than 0.2.0.
 Its tools are `list_themes`, `deck_info`,
 `read_slide`, `export_markdown`, `create_deck`, `edit_slide`, `add_slide`,
-`delete_slide`, `move_slide`, `duplicate_slide`, `apply_theme`, `add_build` and
-`clear_builds`. Editing tools save the deck when they finish, or write a copy
+`delete_slide`, `move_slide`, `duplicate_slide`, `apply_theme`, `add_build`,
+`clear_builds`, `add_image`, `replace_image`, `remove_image`, `add_shape`,
+`add_text_box`, `add_table`, `add_chart` and `delete_drawable`. Editing tools save the deck when they finish, or write a copy
 when given `output`.
 
 For Claude Code:
@@ -299,7 +312,7 @@ Then ask something like "Make a five-slide deck about robot arms in
 4. Build animations on titles and bodies. **Done.**
 5. More bundled themes and switching a deck's theme. **Done.**
 6. A command line tool and an MCP server for LLMs. **Done.**
-7. Images: read, add, fill placeholders, replace and remove, with Markdown support. **Done.** Next: video and audio, images in the CLI and MCP tools, and builds on other shapes.
+7. Images: read, add, fill placeholders, replace and remove, with Markdown support. **Done.** Images, shapes, tables and charts are in the CLI and MCP tools too. Next: video and audio (#33).
 8. Shapes, text boxes, tables and charts, with builds on them and tables in Markdown. **Done.**
 
 ## Driving Keynote directly (legacy)
