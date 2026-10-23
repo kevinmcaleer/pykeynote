@@ -1,0 +1,55 @@
+name: release-js
+
+# Publishes keynotejs to npm with trusted publishing (no npm token stored).
+# Runs when a GitHub release tagged js-vX.Y.Z is published; the version must
+# match js/package.json.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: "Build and pack without publishing"
+        type: boolean
+        default: true
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'js-v')
+    runs-on: ubuntu-latest
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/keynotejs
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: js
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # Trusted publishing needs npm 11.5.1 or later.
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      - run: npm ci
+      - run: npm test
+      - name: Check tag matches version
+        if: github.event_name == 'release'
+        run: |
+          version=$(node -p "require('./package.json').version")
+          tag="${GITHUB_REF_NAME#js-v}"
+          if [ "$version" != "$tag" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $version"; exit 1
+          fi
+      - run: npm pack
+      - name: Smoke test the package
+        run: |
+          mkdir /tmp/smoke && cd /tmp/smoke && npm init -y > /dev/null
+          npm install "$GITHUB_WORKSPACE"/js/keynotejs-*.tgz
+          node --input-type=module -e "import { Presentation } from 'keynotejs'; const d = await Presentation.create(); d.addSlide('Title', { title: 'Hi' }); console.log(d.toBytes().length, d.length)"
+      - name: Publish
+        if: github.event_name == 'release' || !inputs.dry-run
+        run: npm publish --access public

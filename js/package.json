@@ -1,0 +1,51 @@
+{
+  "name": "keynotejs",
+  "version": "0.1.0",
+  "description": "Create, read and edit Apple Keynote presentations from JavaScript and TypeScript, without Keynote",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "templates",
+    "!dist/test"
+  ],
+  "scripts": {
+    "build": "node scripts/copy-templates.mjs && tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "prepack": "npm run build"
+  },
+  "engines": {
+    "node": ">=20.12"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "typescript": "^5.9.0"
+  },
+  "keywords": [
+    "keynote",
+    "apple",
+    "presentation",
+    "slides",
+    "markdown",
+    "iwork"
+  ],
+  "author": "Kevin McAleer",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kevinmcaleer/pykeynote.git",
+    "directory": "js"
+  },
+  "homepage": "https://github.com/kevinmcaleer/pykeynote/tree/main/js#readme",
+  "bugs": "https://github.com/kevinmcaleer/pykeynote/issues"
+}
