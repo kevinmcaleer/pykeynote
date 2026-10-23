@@ -78,6 +78,55 @@ theme's look. A deck from `Presentation.new()` has one of every layout to
 copy from, kept out of sight and left out when you save. For a deck you
 opened, at least one slide must already use the layout.
 
+## Shapes, tables and charts
+
+```python
+from pykeynote import Presentation
+
+deck = Presentation.new()
+slide = deck.add_slide("Title Only", title="Results")
+
+# Shapes and text boxes. Positions and sizes are in points from the top left.
+box = slide.add_shape("rounded rectangle", x=100, y=300, width=500, height=300,
+                      text="Hello", fill="#3366ff")
+slide.add_shape("star", style=3)          # one of the theme's six shape styles
+slide.add_text_box("A note", x=100, y=700, width=800, height=60)
+slide.add_build(box)                      # shapes can have builds too
+
+# Tables: lists of text, numbers, True/False, or None for an empty cell.
+table = slide.add_table(
+    [["Name", "Score"], ["Ada", 42], ["Bob", 3.5]],
+    x=700, y=300, header_rows=1, style=1,
+)
+table.set_cell(2, 1, 7)
+print(table.rows, table.header_rows, table.column_widths)
+
+# Charts: one list of values per row name.
+slide = deck.add_slide("Blank")
+chart = slide.add_chart("column", [[1, 2, 3], [4, 5, 6]],
+                        row_names=["2024", "2025"], column_names=["Q1", "Q2", "Q3"])
+slide.add_chart("pie", [[3, 5, 2]], ["Share"], ["A", "B", "C"], x=1100, y=200)
+chart.set_data([[9, 8, 7]], ["2026"], ["Q1", "Q2", "Q3"])
+chart.chart_type = "line"
+
+for drawable in slide.drawables:          # shapes, text boxes, tables and charts
+    print(drawable.to_dict())
+deck.save("results.key")
+```
+
+Shape kinds are rectangle, rounded rectangle, oval, triangle, diamond,
+pentagon, hexagon, octagon, star, arrow, double arrow and plus. Chart types
+are column, bar, line, area, their stacked forms, pie, donut and scatter.
+Each row of chart data is a series unless `series_by="column"`, which is the
+default for pies and donuts because Keynote draws a pie from the first value
+of each series.
+
+New tables and charts are copied from a small deck Keynote made, bundled
+with pykeynote, and take the look of your deck's theme. `slide.shapes`,
+`slide.tables` and `slide.charts` read what is already on a slide, Keynote's
+own included; `slide.delete_drawable(d)` removes one, and duplicated slides
+get their own copies.
+
 ## Themes
 
 `pykeynote.themes()` lists the bundled themes, each at 16:9 and 4:3. Start a
@@ -120,9 +169,17 @@ settings go in HTML comments, and presenter notes follow a `???` line:
   - Mostly
 - They're useful
 
+| Robot | Legs |
+| --- | --- |
+| Dog | 4 |
+
 ???
 Keep this one short.
 ```
+
+Tables are pipe tables both ways; the rows above the `| --- |` line are
+header rows. A slide with a title and a table but no bullets gets the
+"Title Only" layout.
 
 ## Roadmap
 
@@ -130,7 +187,8 @@ Keep this one short.
 2. Edit text and notes, then save. **Done.**
 3. Add, duplicate, delete and reorder slides, set transitions and skipping, and build decks from Markdown. **Done.**
 4. Build animations on titles and bodies. **Done.**
-5. More bundled themes and switching a deck's theme. **Done.** Next: images, and builds on other shapes.
+5. More bundled themes and switching a deck's theme. **Done.**
+6. Shapes, text boxes, tables and charts, with builds on them and tables in Markdown. **Done.** Next: images.
 
 ## Driving Keynote directly (legacy)
 
