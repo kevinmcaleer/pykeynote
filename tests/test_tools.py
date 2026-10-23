@@ -202,3 +202,97 @@ def test_cli_errors(tmp_path, capsys):
 def test_cli_themes(capsys):
     code, out, _ = run(capsys, "themes")
     assert "Basic White" in out
+
+
+# --- images, shapes, tables and charts ---------------------------------------------
+
+
+def test_objects(deck, tmp_path):
+    from test_media import png
+    from test_slides import check_consistent
+
+    picture = tmp_path / "red.png"
+    picture.write_bytes(png(40, 20))
+    blue = tmp_path / "blue.png"
+    blue.write_bytes(png(40, 20, (0, 0, 200)))
+
+    s = tools.add_shape(deck, 1, "star", text="Wow", fill="#ff0000", x=100, y=100, width=200, height=200)
+    star = s["drawables"][-1]
+    assert (star["type"], star["text"], star["fill"], star["x"]) == ("star", "Wow", "#ff0000", 100)
+
+    s = tools.add_text_box(deck, 1, ["One", {"text": "Two", "level": 1}])
+    assert s["drawables"][-1]["type"] == "text box"
+
+    s = tools.add_table(deck, 1, [["Name", "Score"], ["Ada", 3], ["Bob", None]], name="Scores")
+    table = s["drawables"][-1]
+    assert table["rows"] == [["Name", "Score"], ["Ada", 3], ["Bob", None]] and table["name"] == "Scores"
+
+    s = tools.add_chart(deck, 1, "column", [[1, 2], [3, 4]], ["2025", "2026"], ["Q1", "Q2"], legend=True)
+    chart = s["drawables"][-1]
+    assert chart["chart_type"] == "column" and chart["data"] == [[1, 2], [3, 4]]
+
+    s = tools.add_image(deck, 1, str(picture), x=10, y=10, width=400, description="red")
+    image = s["images"][-1]
+    assert image["size"] == [400, 200] and image["description"] == "red"
+    s = tools.replace_image(deck, 1, image["id"], str(blue))
+    assert len(s["images"]) == 1
+
+    s = tools.add_build(deck, 1, chart["id"])
+    assert s["builds"][-1]["target"] == chart["id"]
+    with pytest.raises(ValueError, match="builds first"):
+        tools.delete_drawable(deck, 1, chart["id"])
+    tools.clear_builds(deck, 1)
+
+    s = tools.delete_drawable(deck, 1, star["id"])
+    assert star["id"] not in [d["id"] for d in s["drawables"]]
+    s = tools.remove_image(deck, 1, s["images"][-1]["id"])
+    assert s["images"] == []
+    check_consistent(Presentation.open(deck))
+
+    with pytest.raises(ValueError, match="both x and y"):
+        tools.add_shape(deck, 1, x=10)
+    with pytest.raises(ValueError, match="no shape"):
+        tools.delete_drawable(deck, 1, 999999)
+    json.dumps(tools.read_slide(deck, 1))
+
+
+def test_cli_objects(tmp_path, capsys):
+    from test_media import png
+
+    key = tmp_path / "talk.key"
+    run(capsys, "new", key)
+    picture = tmp_path / "red.png"
+    picture.write_bytes(png(40, 20))
+    data = tmp_path / "sales.csv"
+    data.write_text(",Q1,Q2\n2025,1,2\n2026,3,4\n", encoding="utf-8")
+
+    for argv in (["shape", key, 0, "--kind", "oval", "--text", "Hi", "--fill", "blue"],
+                 ["textbox", key, 0, "Note", "  detail", "--x", "50", "--y", "50"],
+                 ["table", key, 0, "--row", "A,B", "--row", "1,true"],
+                 ["chart", key, 0, "line", "--csv", data, "--legend", "no"],
+                 ["image", key, 0, picture, "--width", "100", "--alt", "red"]):
+        assert run(capsys, *argv)[0] == 0, argv
+
+    code, out, _ = run(capsys, "show", key, 0, "--json")
+    s = json.loads(out)
+    added = s["drawables"][-4:]  # the title slide already has a text box for the author
+    assert [d["type"] for d in added] == ["oval", "text box", "table", "chart"]
+    assert added[1]["text"] == "Note\ndetail"
+    assert added[2]["rows"] == [["A", "B"], [1, True]]
+    assert added[3]["row_names"] == ["2025", "2026"]
+    assert added[3]["column_names"] == ["Q1", "Q2"]
+
+    code, out, _ = run(capsys, "show", key, 0)
+    assert "chart (id" in out and "image (id" in out
+
+    chart_id = added[3]["id"]
+    assert run(capsys, "build", key, 0, "--target", chart_id)[0] == 0
+    assert Presentation.open(key)[0].builds[-1].target == chart_id
+    assert run(capsys, "build", key, 0, "--clear")[0] == 0
+    assert run(capsys, "remove", key, 0, chart_id)[0] == 0
+    assert run(capsys, "remove", key, 0, s["images"][0]["id"])[0] == 0
+    s = Presentation.open(key)[0]
+    assert len(s.charts) == 0 and s.images == []
+
+    code, _, err = run(capsys, "table", key, 0)
+    assert code == 1 and "--csv" in err

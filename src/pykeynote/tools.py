@@ -11,7 +11,9 @@ from __future__ import annotations
 import os
 from typing import Any, Callable, Dict, List, Optional, Union
 
+from .charts import CHART_TYPES
 from .document import Presentation, Slide, themes
+from .drawables import SHAPE_KINDS
 from .markdown import from_markdown
 from .text import Paragraph
 
@@ -61,6 +63,11 @@ def slide_summary(slide: Slide) -> Dict[str, Any]:
 
 def slide_detail(slide: Slide) -> Dict[str, Any]:
     out = slide.to_dict()
+    # ids let add_build and delete_drawable point at a particular drawable or image
+    for d, entry in zip(slide.drawables, out["drawables"]):
+        entry["id"] = d.identifier
+    for i, entry in zip(slide.images, out["images"]):
+        entry["id"] = i.identifier
     out["paragraphs"] = [{"text": p.text, "level": p.level, "bulleted": p.bulleted} for p in slide.paragraphs]
     out["builds"] = [
         {"target": b.target, "kind": b.kind, "effect": b.effect, "delivery": b.delivery,
@@ -205,7 +212,7 @@ def apply_theme(
 def add_build(
     path: str,
     index: int,
-    target: str = "body",
+    target: Union[str, int] = "body",
     effect: str = "dissolve",
     delivery: Optional[str] = None,
     duration: float = 1.0,
@@ -223,6 +230,172 @@ def clear_builds(path: str, index: int, output: Optional[str] = None) -> Dict[st
     deck = _open(path)
     slide = deck[deck._check_index(index)]
     slide.clear_builds()
+    _save(deck, output)
+    return slide_detail(slide)
+
+
+# --- images, shapes, tables and charts ----------------------------------------------
+
+
+def _frame(x: Optional[float], y: Optional[float]) -> None:
+    if (x is None) != (y is None):
+        raise ValueError("give both x and y, or neither to centre it")
+
+
+def _drawable(slide: Slide, drawable: int) -> Any:
+    found = [d for d in slide.drawables if d.identifier == drawable]
+    if found:
+        return found[0]
+    raise ValueError(
+        f"no shape, text box, table or chart with id {drawable} on slide {slide.index}; "
+        "read_slide lists them with their ids"
+    )
+
+
+def _image(slide: Slide, image: Union[int, str]) -> Any:
+    """An image by its id, or a placeholder tag such as "Media"."""
+    if isinstance(image, str):
+        return image
+    found = [i for i in slide.images if i.identifier == image]
+    if found:
+        return found[0]
+    raise ValueError(f"no image with id {image} on slide {slide.index}; read_slide lists them with their ids")
+
+
+def add_image(
+    path: str,
+    index: int,
+    image: str,
+    x: Optional[float] = None,
+    y: Optional[float] = None,
+    width: Optional[float] = None,
+    height: Optional[float] = None,
+    description: Optional[str] = None,
+    placeholder: Union[None, bool, str] = None,
+    output: Optional[str] = None,
+) -> Dict[str, Any]:
+    _frame(x, y)
+    deck = _open(path)
+    slide = deck[deck._check_index(index)]
+    position = None if x is None else (x, y)
+    size = None if width is None and height is None else (width, height)
+    slide.add_image(_full(image), position, size, description, placeholder)
+    _save(deck, output)
+    return slide_detail(slide)
+
+
+def replace_image(
+    path: str,
+    index: int,
+    target: Union[int, str],
+    image: str,
+    description: Optional[str] = None,
+    output: Optional[str] = None,
+) -> Dict[str, Any]:
+    deck = _open(path)
+    slide = deck[deck._check_index(index)]
+    slide.replace_image(_image(slide, target), _full(image), description)
+    _save(deck, output)
+    return slide_detail(slide)
+
+
+def remove_image(path: str, index: int, target: Union[int, str], output: Optional[str] = None) -> Dict[str, Any]:
+    deck = _open(path)
+    slide = deck[deck._check_index(index)]
+    slide.remove_image(_image(slide, target))
+    _save(deck, output)
+    return slide_detail(slide)
+
+
+def add_shape(
+    path: str,
+    index: int,
+    kind: str = "rectangle",
+    text: Optional[BodyInput] = None,
+    fill: Optional[str] = None,
+    style: int = 0,
+    x: Optional[float] = None,
+    y: Optional[float] = None,
+    width: Optional[float] = None,
+    height: Optional[float] = None,
+    output: Optional[str] = None,
+) -> Dict[str, Any]:
+    _frame(x, y)
+    deck = _open(path)
+    slide = deck[deck._check_index(index)]
+    slide.add_shape(kind, x, y, width, height, None if text is None else _paragraphs(text), fill, style)
+    _save(deck, output)
+    return slide_detail(slide)
+
+
+def add_text_box(
+    path: str,
+    index: int,
+    text: BodyInput,
+    x: Optional[float] = None,
+    y: Optional[float] = None,
+    width: Optional[float] = None,
+    height: Optional[float] = None,
+    output: Optional[str] = None,
+) -> Dict[str, Any]:
+    _frame(x, y)
+    deck = _open(path)
+    slide = deck[deck._check_index(index)]
+    slide.add_text_box(_paragraphs(text), x, y, width, height)
+    _save(deck, output)
+    return slide_detail(slide)
+
+
+def add_table(
+    path: str,
+    index: int,
+    rows: List[List[Any]],
+    header_rows: int = 1,
+    header_columns: int = 0,
+    style: int = 0,
+    name: Optional[str] = None,
+    x: Optional[float] = None,
+    y: Optional[float] = None,
+    width: Optional[float] = None,
+    height: Optional[float] = None,
+    output: Optional[str] = None,
+) -> Dict[str, Any]:
+    _frame(x, y)
+    deck = _open(path)
+    slide = deck[deck._check_index(index)]
+    slide.add_table(rows, x, y, width, height, header_rows, header_columns, style, name)
+    _save(deck, output)
+    return slide_detail(slide)
+
+
+def add_chart(
+    path: str,
+    index: int,
+    chart_type: str,
+    rows: List[List[Optional[float]]],
+    row_names: List[str],
+    column_names: List[str],
+    series_by: Optional[str] = None,
+    legend: Optional[bool] = None,
+    style: int = 0,
+    x: Optional[float] = None,
+    y: Optional[float] = None,
+    width: Optional[float] = None,
+    height: Optional[float] = None,
+    output: Optional[str] = None,
+) -> Dict[str, Any]:
+    _frame(x, y)
+    deck = _open(path)
+    slide = deck[deck._check_index(index)]
+    slide.add_chart(chart_type, rows, row_names, column_names, x, y, width, height, style, series_by, legend)
+    _save(deck, output)
+    return slide_detail(slide)
+
+
+def delete_drawable(path: str, index: int, drawable: int, output: Optional[str] = None) -> Dict[str, Any]:
+    deck = _open(path)
+    slide = deck[deck._check_index(index)]
+    slide.delete_drawable(_drawable(slide, drawable))
     _save(deck, output)
     return slide_detail(slide)
 
@@ -245,6 +418,18 @@ _BODY = {
              "required": ["text"]},
         ]}},
     ],
+}
+_UNITS = "Positions and sizes are in points from the slide's top left; deck_info gives the slide size."
+_FRAME = {
+    "x": {"type": "number", "description": "Left edge, in points"},
+    "y": {"type": "number", "description": "Top edge, in points"},
+    "width": {"type": "number"},
+    "height": {"type": "number"},
+}
+_STYLE = {"type": "integer", "minimum": 0, "maximum": 5, "default": 0, "description": "One of the theme's six styles"}
+_IMAGE_TARGET = {
+    "description": "The image's id from read_slide, or a media placeholder tag such as Media",
+    "anyOf": [{"type": "integer"}, {"type": "string"}],
 }
 _MARKDOWN_FORMAT = (
     "Slides are separated by a line holding only ---. Each slide starts with a "
@@ -411,14 +596,18 @@ TOOLS: List[Dict[str, Any]] = [
         "name": "add_build",
         "function": add_build,
         "description": (
-            "Add a build animation to a slide's title or body. Each build plays "
+            "Add a build animation to a slide's title, body or another object on it. Each build plays "
             "after the existing ones, one click per step. Saves the deck."
         ),
         "inputSchema": _schema(
             {
                 "path": _PATH,
                 "index": _INDEX,
-                "target": {"type": "string", "enum": ["title", "body"], "default": "body"},
+                "target": {
+                    "description": "title, body, or the id of a shape, text box, table, chart or image (see read_slide)",
+                    "anyOf": [{"type": "string", "enum": ["title", "body"]}, {"type": "integer"}],
+                    "default": "body",
+                },
                 "effect": {"type": "string", "description": "e.g. dissolve, move in", "default": "dissolve"},
                 "delivery": {"type": "string", "enum": ["all at once", "by bullet"]},
                 "duration": {"type": "number", "default": 1.0},
@@ -433,6 +622,153 @@ TOOLS: List[Dict[str, Any]] = [
         "function": clear_builds,
         "description": "Remove every build animation from a slide. Saves the deck.",
         "inputSchema": _schema({"path": _PATH, "index": _INDEX, "output": _OUTPUT}, ["path", "index"]),
+        "destructive": True,
+    },
+    {
+        "name": "add_image",
+        "function": add_image,
+        "description": (
+            "Add a PNG, JPEG or GIF image file to a slide. With no x, y, width or "
+            "height it fills the layout's first empty media placeholder, cropped to "
+            "fit, if there is one; otherwise it goes on top, centred unless x and y "
+            "are given. Give width or height alone to keep the picture's shape. "
+            + _UNITS + " Saves the deck."
+        ),
+        "inputSchema": _schema(
+            {
+                "path": _PATH,
+                "index": _INDEX,
+                "image": {"type": "string", "description": "Path to the image file"},
+                **_FRAME,
+                "description": {"type": "string", "description": "Accessibility description (alt text)"},
+                "placeholder": {
+                    "description": "false to never use a placeholder, or a placeholder tag such as Media-2",
+                    "anyOf": [{"type": "boolean"}, {"type": "string"}],
+                },
+                "output": _OUTPUT,
+            },
+            ["path", "index", "image"],
+        ),
+    },
+    {
+        "name": "replace_image",
+        "function": replace_image,
+        "description": (
+            "Swap the picture in an existing image or media placeholder for a new "
+            "image file, keeping its place and crop. Saves the deck."
+        ),
+        "inputSchema": _schema(
+            {"path": _PATH, "index": _INDEX, "target": _IMAGE_TARGET,
+             "image": {"type": "string", "description": "Path to the new image file"},
+             "description": {"type": "string", "description": "Accessibility description (alt text)"},
+             "output": _OUTPUT},
+            ["path", "index", "target", "image"],
+        ),
+    },
+    {
+        "name": "remove_image",
+        "function": remove_image,
+        "description": "Delete an image from a slide, with any builds on it. Saves the deck.",
+        "inputSchema": _schema(
+            {"path": _PATH, "index": _INDEX, "target": _IMAGE_TARGET, "output": _OUTPUT}, ["path", "index", "target"]
+        ),
+        "destructive": True,
+    },
+    {
+        "name": "add_shape",
+        "function": add_shape,
+        "description": (
+            "Add a shape, optionally with text in it, in one of the theme's six "
+            "shape styles. Centred unless x and y are given; 400 x 300 unless "
+            "width and height are given. " + _UNITS + " Saves the deck."
+        ),
+        "inputSchema": _schema(
+            {
+                "path": _PATH,
+                "index": _INDEX,
+                "kind": {"type": "string", "enum": list(SHAPE_KINDS), "default": "rectangle"},
+                "text": _BODY,
+                "fill": {"type": "string", "description": "Fill colour, e.g. #3366ff or a CSS colour name"},
+                "style": _STYLE,
+                **_FRAME,
+                "output": _OUTPUT,
+            },
+            ["path", "index"],
+        ),
+    },
+    {
+        "name": "add_text_box",
+        "function": add_text_box,
+        "description": (
+            "Add a free text box in the theme's text style, for text outside the "
+            "title and body. " + _UNITS + " Saves the deck."
+        ),
+        "inputSchema": _schema(
+            {"path": _PATH, "index": _INDEX, "text": _BODY, **_FRAME, "output": _OUTPUT}, ["path", "index", "text"]
+        ),
+    },
+    {
+        "name": "add_table",
+        "function": add_table,
+        "description": (
+            "Add a table. rows is a list of rows, each a list of cells: text, "
+            "numbers, true/false, or null for empty. The first header_rows rows "
+            "are headers. Centred unless x and y are given. " + _UNITS + " Saves the deck."
+        ),
+        "inputSchema": _schema(
+            {
+                "path": _PATH,
+                "index": _INDEX,
+                "rows": {"type": "array", "items": {"type": "array", "items": {
+                    "anyOf": [{"type": "string"}, {"type": "number"}, {"type": "boolean"}, {"type": "null"}]}}},
+                "header_rows": {"type": "integer", "minimum": 0, "default": 1},
+                "header_columns": {"type": "integer", "minimum": 0, "default": 0},
+                "style": _STYLE,
+                "name": {"type": "string", "description": "The table's name"},
+                **_FRAME,
+                "output": _OUTPUT,
+            },
+            ["path", "index", "rows"],
+        ),
+    },
+    {
+        "name": "add_chart",
+        "function": add_chart,
+        "description": (
+            "Add a chart. rows holds one list of values per row name, with one "
+            "value per column name. Each row is a series, unless series_by is "
+            "column (the default for pie and donut, whose slices are the first "
+            "row's values). Centred unless x and y are given. " + _UNITS + " Saves the deck."
+        ),
+        "inputSchema": _schema(
+            {
+                "path": _PATH,
+                "index": _INDEX,
+                "chart_type": {"type": "string", "enum": list(CHART_TYPES)},
+                "rows": {"type": "array", "items": {"type": "array", "items": {"type": ["number", "null"]}}},
+                "row_names": {"type": "array", "items": {"type": "string"}},
+                "column_names": {"type": "array", "items": {"type": "string"}},
+                "series_by": {"type": "string", "enum": ["row", "column"]},
+                "legend": {"type": "boolean", "description": "Default: shown when there is more than one series"},
+                "style": _STYLE,
+                **_FRAME,
+                "output": _OUTPUT,
+            },
+            ["path", "index", "chart_type", "rows", "row_names", "column_names"],
+        ),
+    },
+    {
+        "name": "delete_drawable",
+        "function": delete_drawable,
+        "description": (
+            "Delete a shape, text box, table or chart from a slide, by the id "
+            "read_slide shows. Clear the slide's builds first if one targets it. Saves the deck."
+        ),
+        "inputSchema": _schema(
+            {"path": _PATH, "index": _INDEX, "drawable": {"type": "integer", "description": "Its id from read_slide"},
+             "output": _OUTPUT},
+            ["path", "index", "drawable"],
+        ),
         "destructive": True,
     },
 ]

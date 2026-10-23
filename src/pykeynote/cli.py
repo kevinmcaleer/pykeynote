@@ -7,6 +7,8 @@ LLM agents. ``pykeynote mcp`` starts the MCP server instead.
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import json
 import sys
 from typing import Any, Dict, List, Optional, Sequence
@@ -31,6 +33,51 @@ def _read(path: str) -> str:
         return sys.stdin.read()
     with open(path, encoding="utf-8") as f:
         return f.read()
+
+
+def _target(value: str) -> Any:
+    """A build or image target: an id from ``show --json``, or a name such as body or Media."""
+    return int(value) if value.lstrip("-").isdigit() else value
+
+
+def _cell(value: str) -> Any:
+    v = value.strip()
+    if v == "":
+        return None
+    if v.lower() in ("true", "false"):
+        return v.lower() == "true"
+    for kind in (int, float):
+        try:
+            return kind(v)
+        except ValueError:
+            pass
+    return value
+
+
+def _grid(args: argparse.Namespace) -> List[List[Any]]:
+    """Rows from ``--csv FILE`` or repeated ``--row a,b,c``."""
+    if args.csv:
+        text = _read(args.csv)
+    elif args.row:
+        text = "\n".join(args.row)
+    else:
+        raise ValueError("give the cells with --csv FILE or --row a,b,c (repeat --row for each row)")
+    return [[_cell(c) for c in row] for row in csv.reader(io.StringIO(text)) if row]
+
+
+def _chart_data(grid: List[List[Any]]) -> Dict[str, Any]:
+    """Split a grid whose first row holds the column names and first column the row names."""
+    if len(grid) < 2 or len(grid[0]) < 2:
+        raise ValueError("chart data needs a header row of column names and a first column of row names")
+    return {
+        "column_names": [str(c) for c in grid[0][1:]],
+        "row_names": [str(r[0]) for r in grid[1:]],
+        "rows": [[c if isinstance(c, (int, float)) and not isinstance(c, bool) else None for c in r[1:]] for r in grid[1:]],
+    }
+
+
+def _frame(args: argparse.Namespace) -> Dict[str, Any]:
+    return {"x": args.x, "y": args.y, "width": args.width, "height": args.height}
 
 
 def _print_slides(slides: List[Dict[str, Any]]) -> None:
@@ -59,6 +106,14 @@ def _print_slide(s: Dict[str, Any]) -> None:
     t = s["transition"]
     if t["effect"]:
         print(f"transition: {t['effect']} {t['duration']:g}s")
+    for d in s["drawables"]:
+        what = d.get("chart_type") or d.get("name") or (d.get("text") or "").split("\n")[0]
+        print(f"{d['type']} (id {d['id']}): {what}  at {d['x']:g},{d['y']:g} size {d['width']:g}x{d['height']:g}")
+    for i in s["images"]:
+        x, y = i["position"]
+        w, h = i["size"]
+        what = i["placeholder"] and f"placeholder {i['placeholder']}" or i["filename"] or ""
+        print(f"image (id {i['id']}): {what}  at {x:g},{y:g} size {w:g}x{h:g}")
     for b in s["builds"]:
         print(f"build: {b['target']} {b['kind']}, {b['effect']}, {b['delivery']}, {b['duration']:g}s")
     if s["notes"]:
@@ -98,8 +153,32 @@ def _run(args: argparse.Namespace) -> Any:
     if c == "build":
         if args.clear:
             return tools.clear_builds(args.deck, args.index, args.output)
-        return tools.add_build(args.deck, args.index, args.target, args.effect, args.delivery,
+        return tools.add_build(args.deck, args.index, _target(args.target), args.effect, args.delivery,
                                args.duration, args.kind, args.output)
+    if c == "image":
+        if args.replace is not None:
+            return tools.replace_image(args.deck, args.index, _target(args.replace), args.file, args.alt, args.output)
+        placeholder = False if args.no_placeholder else args.placeholder
+        return tools.add_image(args.deck, args.index, args.file, description=args.alt, placeholder=placeholder,
+                               output=args.output, **_frame(args))
+    if c == "shape":
+        return tools.add_shape(args.deck, args.index, args.kind, _body(args.text), args.fill, args.style,
+                               output=args.output, **_frame(args))
+    if c == "textbox":
+        return tools.add_text_box(args.deck, args.index, _body(args.text), output=args.output, **_frame(args))
+    if c == "table":
+        return tools.add_table(args.deck, args.index, _grid(args), args.header_rows, args.header_columns,
+                               args.style, args.name, output=args.output, **_frame(args))
+    if c == "chart":
+        legend = None if args.legend is None else args.legend == "yes"
+        return tools.add_chart(args.deck, args.index, args.type, series_by=args.series_by, legend=legend,
+                               style=args.style, output=args.output, **_chart_data(_grid(args)), **_frame(args))
+    if c == "remove":
+        target = _target(args.target)
+        slide = tools.read_slide(args.deck, args.index)
+        if isinstance(target, int) and any(d["id"] == target for d in slide["drawables"]):
+            return tools.delete_drawable(args.deck, args.index, target, args.output)
+        return tools.remove_image(args.deck, args.index, target, args.output)
     raise AssertionError(c)
 
 
@@ -174,12 +253,61 @@ def parser() -> argparse.ArgumentParser:
     cp.add_argument("--layout", action="append", metavar="OLD=NEW", help="use layout NEW for slides on OLD")
 
     cp = command("build", "add a build animation to a slide, or clear them", index=True, writes=True)
-    cp.add_argument("--target", default="body", choices=["title", "body"])
+    cp.add_argument("--target", default="body", help="title, body, or an object's id from 'show'")
     cp.add_argument("--effect", default="dissolve", help="e.g. dissolve, 'move in'")
     cp.add_argument("--delivery", choices=["all at once", "by bullet"])
     cp.add_argument("--duration", type=float, default=1.0)
     cp.add_argument("--kind", default="in", choices=["in", "out"])
     cp.add_argument("--clear", action="store_true", help="remove the slide's builds instead")
+
+    def frame(cp: argparse.ArgumentParser) -> None:
+        cp.add_argument("--x", type=float, help="left edge in points (default: centred)")
+        cp.add_argument("--y", type=float, help="top edge in points (default: centred)")
+        cp.add_argument("--width", type=float)
+        cp.add_argument("--height", type=float)
+
+    def cells(cp: argparse.ArgumentParser) -> None:
+        cp.add_argument("--csv", metavar="FILE", help="CSV file of cells (- for stdin)")
+        cp.add_argument("--row", action="append", help="one row of comma-separated cells; repeat for more rows")
+        cp.add_argument("--style", type=int, default=0, choices=range(6), help="one of the theme's six styles")
+
+    cp = command("image", "add a PNG, JPEG or GIF image, or replace one", index=True, writes=True)
+    cp.add_argument("file", help="the image file")
+    frame(cp)
+    cp.add_argument("--alt", help="accessibility description")
+    cp.add_argument("--placeholder", help="fill this media placeholder, e.g. Media-2")
+    cp.add_argument("--no-placeholder", action="store_true", help="don't fill a media placeholder")
+    cp.add_argument("--replace", metavar="TARGET", help="swap the picture in this image id or placeholder instead")
+
+    cp = command("shape", "add a shape", index=True, writes=True)
+    cp.add_argument("--kind", default="rectangle", help="e.g. rectangle, oval, star, arrow")
+    cp.add_argument("--text", action="append", help=body_help)
+    cp.add_argument("--fill", help="fill colour, e.g. '#3366ff' or red")
+    cp.add_argument("--style", type=int, default=0, choices=range(6), help="one of the theme's six shape styles")
+    frame(cp)
+
+    cp = command("textbox", "add a text box", index=True, writes=True)
+    cp.add_argument("text", nargs="+", help=body_help)
+    frame(cp)
+
+    cp = command("table", "add a table from CSV", index=True, writes=True)
+    cells(cp)
+    cp.add_argument("--header-rows", type=int, default=1)
+    cp.add_argument("--header-columns", type=int, default=0)
+    cp.add_argument("--name", help="the table's name")
+    frame(cp)
+
+    cp = command("chart", "add a chart from CSV: column names in the first row, row names in the first column",
+                 index=True, writes=True)
+    cp.add_argument("type", help="column, bar, line, area, pie, donut, scatter, or 'stacked column' etc.")
+    cells(cp)
+    cp.add_argument("--series-by", choices=["row", "column"])
+    cp.add_argument("--legend", choices=["yes", "no"])
+    frame(cp)
+
+    cp = command("remove", "delete a shape, text box, table, chart or image by its id from 'show'",
+                 index=True, writes=True)
+    cp.add_argument("target", help="the id, or a media placeholder tag such as Media")
 
     sub.add_parser("mcp", help="run the MCP server on stdin and stdout", description="Run the MCP server on stdio.")
     return p
