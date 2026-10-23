@@ -78,6 +78,33 @@ theme's look. A deck from `Presentation.new()` has one of every layout to
 copy from, kept out of sight and left out when you save. For a deck you
 opened, at least one slide must already use the layout.
 
+## Themes
+
+`pykeynote.themes()` lists the bundled themes, each at 16:9 and 4:3. Start a
+deck in one, or switch an existing deck to another:
+
+```python
+from pykeynote import Presentation, themes
+
+print(themes())                           # ['Basic Black', 'Basic White', ...]
+deck = Presentation.new("Basic Black", aspect="4:3")
+
+deck = Presentation.open("talk.key")
+deck.apply_theme("Basic Black")           # or: deck.theme = "Basic Black"
+deck.apply_theme("Basic Black", layouts={"Quote": "Statement"})
+deck.save("talk-dark.key")
+```
+
+`apply_theme` rebuilds each slide on the new theme's layout of the same
+name, or the closest one that shows a title and body where the slide has
+them (`deck.match_layout(name, title=True, body=True)` shows the choice).
+Titles and bodies with their indent levels, notes, transitions, skipping
+and builds on titles and bodies come along. Images, shapes, text boxes and
+text formatting beyond the layout's own don't. The slide size stays 16:9 or
+4:3 unless you pass `aspect=`.
+
+The templates are made by Keynote 14.5 with `scripts/make_templates.py`.
+
 ## Markdown
 
 `to_markdown()` writes one block per slide, separated by `---`. Slide
@@ -102,7 +129,8 @@ Keep this one short.
 1. Read decks and export Markdown. **Done.**
 2. Edit text and notes, then save. **Done.**
 3. Add, duplicate, delete and reorder slides, set transitions and skipping, and build decks from Markdown. **Done.**
-4. Build animations on titles and bodies. **Done.** Next: more bundled themes, images, and builds on other shapes.
+4. Build animations on titles and bodies. **Done.**
+5. More bundled themes and switching a deck's theme. **Done.** Next: images, and builds on other shapes.
 
 ## Driving Keynote directly (legacy)
 
