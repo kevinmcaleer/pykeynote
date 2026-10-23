@@ -4,6 +4,7 @@ Each slide becomes a block, and blocks are separated by ``---``::
 
     <!-- layout: Title & Bullets -->
     <!-- transition: dissolve 1.5s -->
+    <!-- build: body, dissolve, by bullet, 1s -->
     # Slide title
 
     - A bullet
@@ -47,6 +48,11 @@ def slide_to_markdown(slide: "Slide") -> str:
         lines.append(f"<!-- transition: {t.effect} {_fmt_seconds(t.duration)} -->")
     if slide.skipped:
         lines.append("<!-- skipped -->")
+    for b in slide.builds:
+        if isinstance(b.target, str):
+            delivery = "by bullet" if b.delivery == "By Paragraph" else b.delivery.lower()
+            kind = "" if b.kind == "in" else f", {b.kind}"
+            lines.append(f"<!-- build: {b.target}, {b.effect}, {delivery}, {_fmt_seconds(b.duration)}{kind} -->")
 
     if slide.title is not None and slide.title.strip():
         lines.append("# " + " ".join(slide.title.split()))
@@ -95,6 +101,7 @@ class SlideSpec:
     transition: Optional[str] = None
     transition_duration: Optional[float] = None
     skipped: bool = False
+    builds: List[dict] = field(default_factory=list)
 
     def default_layout(self) -> str:
         bulleted = any(p.bulleted for p in self.paragraphs)
@@ -110,6 +117,23 @@ class SlideSpec:
 def _clean(text: str) -> str:
     text = text.strip().replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n")
     return text[1:] if text.startswith("\\") else text
+
+
+def _parse_build(value: str) -> dict:
+    """Read ``target, effect[, delivery][, 1.5s][, in|out]`` from a build comment."""
+    parts = [p.strip() for p in value.split(",") if p.strip()]
+    if len(parts) < 2:
+        raise ValueError(f"a build needs at least a target and an effect: {value!r}")
+    build = {"target": parts[0].lower(), "effect": parts[1]}
+    for part in parts[2:]:
+        low = part.lower()
+        if re.fullmatch(r"[\d.]+\s*s", low):
+            build["duration"] = float(low.rstrip("s").strip())
+        elif low in ("in", "out"):
+            build["kind"] = low
+        else:
+            build["delivery"] = low
+    return build
 
 
 def parse_markdown(text: str) -> List[SlideSpec]:
@@ -159,6 +183,8 @@ def parse_markdown(text: str) -> List[SlideSpec]:
                     spec.transition_duration = float(m.group(2)) if m.group(2) else None
                 elif key == "skipped":
                     spec.skipped = value.lower() not in ("false", "no", "0")
+                elif key == "build":
+                    spec.builds.append(_parse_build(value))
                 continue
             heading = _HEADING.match(stripped)
             if heading and spec.title is None and not spec.paragraphs and not pending:
@@ -210,4 +236,6 @@ def from_markdown(text: str, theme: str = "Basic White", aspect: str = "16:9") -
             slide.set_transition(spec.transition, spec.transition_duration)
         if spec.skipped:
             slide.skipped = True
+        for build in spec.builds:
+            slide.add_build(**build)
     return deck

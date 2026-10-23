@@ -64,6 +64,11 @@ deck.delete_slide(-1)
 deck[0].skipped = True
 deck.save()                               # back to talk.key
 
+slide = deck[1]
+slide.add_build("title", "move in")       # one click
+slide.add_build("body", "dissolve")       # then one click per bullet
+print(slide.builds)
+
 deck = from_markdown(open("talk.md").read())
 deck.save("from-markdown.key")
 ```
@@ -81,6 +86,7 @@ settings go in HTML comments, and presenter notes follow a `???` line:
 ```markdown
 <!-- layout: Title & Bullets -->
 <!-- transition: dissolve 1.5s -->
+<!-- build: body, dissolve, by bullet, 1s -->
 # Why robots?
 
 - They're fun
@@ -96,7 +102,7 @@ Keep this one short.
 1. Read decks and export Markdown. **Done.**
 2. Edit text and notes, then save. **Done.**
 3. Add, duplicate, delete and reorder slides, set transitions and skipping, and build decks from Markdown. **Done.**
-4. More bundled themes, images, and build animations.
+4. Build animations on titles and bodies. **Done.** Next: more bundled themes, images, and builds on other shapes.
 
 ## Driving Keynote directly (legacy)
 
