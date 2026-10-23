@@ -7,6 +7,9 @@ pykeynote drives Keynote itself through its scripting interface, so it needs
 macOS with Keynote installed. The first time it runs, macOS asks whether your
 terminal (or Python) may control Keynote. Say yes.
 
+Without a `theme`, `Presentation.new` uses whatever default theme is set in
+Keynote's settings.
+
 ## Install
 
 ```sh

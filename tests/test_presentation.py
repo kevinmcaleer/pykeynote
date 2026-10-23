@@ -6,7 +6,7 @@ from pykeynote.transitions import normalize_effect
 
 def info(count=3, **extra):
     data = {"name": "Deck", "path": "/tmp/Deck.key", "theme": "Basic White",
-            "width": 1920, "height": 1080, "layouts": ["Title", "Title & Bullets"],
+            "width": 1920, "height": 1080,
             "slide_count": count}
     data.update(extra)
     return data
@@ -77,11 +77,43 @@ def test_add_slide_with_fields_and_index(osa):
 
 
 def test_read_slides(osa):
-    rows = [{"index": 0, "title": "T", "body": None, "notes": "", "layout": "Title",
-             "skipped": False, "transition": {"effect": "magic move", "duration": 1,
-                                              "delay": 0, "automatic": False}}]
-    osa.reply(rows)
-    assert Presentation("DOC1").read_slides() == rows
+    row = {"index": 0, "title": "T", "body": None, "notes": "", "skipped": False,
+           "transition": {"effect": "magic move", "duration": 1, "delay": 0, "automatic": False}}
+    osa.reply([row, dict(row, index=1)])
+    osa.reply("Title\nTitle, Bullets & Photo", language="AppleScript")
+    rows = Presentation("DOC1").read_slides()
+    assert [r["layout"] for r in rows] == ["Title", "Title, Bullets & Photo"]
+
+
+def test_layouts_keep_names_with_commas(osa):
+    osa.reply("Title\nTitle, Bullets & Photo\nBlank", language="AppleScript")
+    assert Presentation("DOC1").layouts == ["Title", "Title, Bullets & Photo", "Blank"]
+    language, script, args = osa.last
+    assert language == "AppleScript" and args == ["DOC1"]
+
+
+def test_layouts_empty(osa):
+    osa.reply("", language="AppleScript")
+    assert Presentation("DOC1").layouts == []
+
+
+def test_update_sets_layout_before_text(osa):
+    pres = Presentation("DOC1")
+    osa.reply(info())
+    pres[1].update(layout="Title & Bullets", title="Hi")
+    _, (lang1, _, args1), (lang2, _, args2) = osa.calls
+    assert lang1 == "AppleScript" and args1 == ["DOC1", "2", "Title & Bullets"]
+    assert lang2 == "JavaScript" and args2 == {"doc": "DOC1", "index": 1, "title": "Hi"}
+
+
+def test_read_slide_includes_layout(osa):
+    pres = Presentation("DOC1")
+    osa.reply(info())
+    s = pres[2]
+    osa.reply({"index": 2, "title": "T"})
+    osa.reply("Bullets", language="AppleScript")
+    assert s.read() == {"index": 2, "title": "T", "layout": "Bullets"}
+    assert osa.last[2] == ["DOC1", "3"]
 
 
 def test_transition_round_trip(osa):
