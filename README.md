@@ -73,6 +73,32 @@ deck = from_markdown(open("talk.md").read())
 deck.save("from-markdown.key")
 ```
 
+## Images
+
+```python
+deck = Presentation.new()
+slide = deck.add_slide("Title & Photo", title="Meet the robot")
+slide.add_image("robot.jpg", description="A small wheeled robot")  # fills the photo placeholder
+
+slide = deck.add_slide("Blank")
+slide.add_image("logo.png", position=(1600, 40), size=(200, None))  # top right, 200 pt wide
+
+for image in slide.images:      # back to front
+    print(image.position, image.size, image.pixel_size, image.description, image.filename)
+    open(image.name, "wb").write(image.data)
+
+slide.replace_image(0, "new-logo.png")   # by index, Image, or placeholder tag such as "Media"
+slide.remove_image(0)
+```
+
+`add_image` takes a path or bytes, as PNG, JPEG or GIF. With no position or
+size it fills the slide's first media placeholder, cropping the picture to it
+as Keynote does; otherwise the image goes on top, centred if no position is
+given. A placeholder still showing the theme's sample photo has
+`is_sample == True` and no `data`, because Keynote keeps those photos outside
+the file. `slide.placeholders` lists the layout's placeholders in reading
+order. Images can have builds too: `slide.add_build(image.identifier, "dissolve")`.
+
 `add_slide` copies a slide that already uses the layout, so it keeps the
 theme's look. A deck from `Presentation.new()` has one of every layout to
 copy from, kept out of sight and left out when you save. For a deck you
@@ -122,6 +148,20 @@ settings go in HTML comments, and presenter notes follow a `???` line:
 
 ???
 Keep this one short.
+```
+
+Images use Markdown's own syntax. One without a title fills the layout's
+next photo placeholder; a title of `"x,y widthxheight"` puts it at that spot
+instead. A slide with images and no `layout` comment gets a photo layout,
+and `from_markdown` removes any placeholder left without a picture.
+`to_markdown(image_dir="talk-images")` saves the pictures and links them
+from there; image paths in `from_markdown` are relative to `base_dir`.
+
+```markdown
+# Meet the robot
+
+![A small wheeled robot](talk-images/robot.jpg)
+![Logo](talk-images/logo.png "1600,40 200x100")
 ```
 
 ## Command line
@@ -196,7 +236,8 @@ Then ask something like "Make a five-slide deck about robot arms in
 3. Add, duplicate, delete and reorder slides, set transitions and skipping, and build decks from Markdown. **Done.**
 4. Build animations on titles and bodies. **Done.**
 5. More bundled themes and switching a deck's theme. **Done.**
-6. A command line tool and an MCP server for LLMs. **Done.** Next: images, and builds on other shapes.
+6. A command line tool and an MCP server for LLMs. **Done.**
+7. Images: read, add, fill placeholders, replace and remove, with Markdown support. **Done.** Next: video and audio, images in the CLI and MCP tools, and builds on other shapes.
 
 ## Driving Keynote directly (legacy)
 
