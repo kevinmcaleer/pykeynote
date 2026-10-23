@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import copy
 import re
+import uuid as uuidlib
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from keynote_parser.codec import IWAArchiveSegment, IWAFile
@@ -103,10 +104,11 @@ def remap_uuids(message: Any, uuids: UUIDMap, strings: Dict[str, str]) -> None:
                     setattr(m, f, (new >> (32 * i)) & 0xFFFFFFFF)
         for field, value in m.ListFields():
             if field.type == field.TYPE_STRING and not _is_repeated(field) and _UUID_STRING.match(value):
+                # A UUID written out, such as a table's table_id. Its bytes are the same UUID as
+                # the CFUUID form (w0 first, little-endian), so it maps the same way.
                 if value not in strings:
-                    import uuid as uuidlib
-
-                    strings[value] = str(uuidlib.uuid4()).upper()
+                    new = uuids(int.from_bytes(uuidlib.UUID(value).bytes, "little"))
+                    strings[value] = str(uuidlib.UUID(bytes=new.to_bytes(16, "little"))).upper()
                 setattr(m, field.name, strings[value])
 
     walk_messages(message, visit)

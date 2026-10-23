@@ -305,3 +305,18 @@ def test_markdown_table_without_header():
 
 def test_keynote_table_exports_to_markdown(deck):
     assert "| Name | Score | Note |\n| --- | --- | --- |\n| Ada | 42 | first |" in deck.to_markdown()
+
+
+def test_new_table_id_is_its_calc_engine_uuid():
+    """Keynote drops a table whose table_id isn't the UUID of its base formula owner."""
+    import uuid
+
+    from pykeynote.tables import _table_uid
+
+    for deck, table in [
+        (lambda d: (d, d[1].tables[0]))(Presentation.open(FIXTURE)),
+        (lambda d: (d, d.add_slide("Blank").add_table([["a"], [1]])))(Presentation.new()),
+    ]:
+        u = _table_uid(deck.package, table)
+        value = (u.upper << 64) | u.lower
+        assert table._model.table_id == str(uuid.UUID(bytes=value.to_bytes(16, "little"))).upper()
