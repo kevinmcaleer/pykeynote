@@ -7,7 +7,8 @@ it does.
 """
 
 from ._osa import KeynoteError
-from .document import Paragraph, Presentation, Slide, Transition
+from .document import Presentation, Slide, Transition
+from .text import Paragraph, UnsupportedTextError
 
-__all__ = ["KeynoteError", "Paragraph", "Presentation", "Slide", "Transition"]
+__all__ = ["KeynoteError", "Paragraph", "Presentation", "Slide", "Transition", "UnsupportedTextError"]
 __version__ = "0.2.0"

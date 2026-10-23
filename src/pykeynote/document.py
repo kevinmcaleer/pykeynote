@@ -5,24 +5,10 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, List, Optional, Tuple
+from typing import Any, Iterable, List, Optional, Tuple, Union
 
 from .package import Package, PathLike
-
-# Characters Keynote uses inside text storage.
-_PARAGRAPH = "\r"  # end of paragraph
-_LINE_BREAK = " "  # line break inside a paragraph (shift-return)
-_ATTACHMENT = "￼"  # stands in for an inline object, such as an image
-
-
-@dataclass(frozen=True)
-class Paragraph:
-    """One paragraph of text. ``level`` is the list indent level, from 0."""
-
-    text: str
-    level: int = 0
-    bulleted: bool = False
-
+from .text import Paragraph, ParagraphInput, Text
 
 @dataclass(frozen=True)
 class Transition:
@@ -50,69 +36,6 @@ def _theme_name(identifier: str) -> str:
     return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", name)
 
 
-class Text:
-    """The text in one Keynote text storage."""
-
-    def __init__(self, package: Package, storage: Any):
-        self._package = package
-        self._storage = storage
-
-    @property
-    def raw(self) -> str:
-        return "".join(self._storage.text)
-
-    def __str__(self) -> str:
-        return "\n".join(p.text for p in self.paragraphs)
-
-    @property
-    def paragraphs(self) -> List[Paragraph]:
-        raw = self.raw.replace(_ATTACHMENT, "")
-        if not raw:
-            return []
-        out: List[Paragraph] = []
-        start = 0
-        levels = _ranges(self._storage.table_para_data.entries, lambda e: e.first)
-        bullets = _ranges(self._storage.table_list_style.entries, self._is_bulleted)
-        for chunk in raw.split(_PARAGRAPH):
-            out.append(
-                Paragraph(
-                    chunk.replace(_LINE_BREAK, "\n"),
-                    level=int(_value_at(levels, start) or 0),
-                    bulleted=bool(_value_at(bullets, start)),
-                )
-            )
-            start += len(chunk) + 1
-        return out
-
-    def _is_bulleted(self, entry: Any) -> Optional[bool]:
-        if not entry.HasField("object"):
-            return None
-        style = self._package.deref(entry.object)
-        return bool(getattr(style, "strings", None)) or any(t != 0 for t in getattr(style, "label_types", []))
-
-
-def _ranges(entries: Any, value: Any) -> List[Tuple[int, Any]]:
-    """``(start, value)`` pairs from a Keynote attribute table.
-
-    ``value`` returns ``None`` for an entry that only repeats the previous value.
-    """
-    out: List[Tuple[int, Any]] = []
-    for e in entries:
-        v = value(e)
-        if v is not None:
-            out.append((e.character_index, v))
-    return out
-
-
-def _value_at(ranges: List[Tuple[int, Any]], index: int) -> Any:
-    current = None
-    for start, value in ranges:
-        if start > index:
-            break
-        current = value
-    return current
-
-
 class Slide:
     """One slide, read from the file."""
 
@@ -120,8 +43,10 @@ class Slide:
         self.presentation = presentation
         self.index = index
         self._package = presentation.package
+        self._node_id = node_ref.identifier
         self._node = self._package.deref(node_ref)
-        self._slide = self._package.deref(self._node.slide)
+        self._slide_id = self._node.slide.identifier
+        self._slide = self._package.get(self._slide_id)
 
     def __repr__(self) -> str:
         return f"<Slide {self.index} {self.layout!r} title={self.title!r}>"
@@ -134,7 +59,21 @@ class Slide:
         if ref.identifier not in {r.identifier for r in self._slide.drawables_z_order}:
             return None
         placeholder = self._package.deref(ref)
-        return Text(self._package, self._package.deref(placeholder.super.owned_storage))
+        return Text(self._package, placeholder.super.owned_storage.identifier)
+
+    def _set_placeholder_text(self, field: str, value: Union[str, Iterable[ParagraphInput]]) -> None:
+        text = self._placeholder_text(field)
+        if text is None:
+            what = "title" if field == "titlePlaceholder" else "body"
+            raise ValueError(f"the {self.layout!r} layout doesn't show a {what} on slide {self.index}")
+        text.set_paragraphs(value.split("\n") if isinstance(value, str) else value)
+        self._touched()
+
+    def _touched(self) -> None:
+        # Keynote redraws thumbnails flagged as dirty when it opens the file.
+        if not self._node.thumbnailsAreDirty:
+            self._node.thumbnailsAreDirty = True
+            self._package.mark_changed(self._node_id)
 
     @property
     def title_text(self) -> Optional[Text]:
@@ -150,11 +89,23 @@ class Slide:
         text = self.title_text
         return None if text is None else str(text)
 
+    @title.setter
+    def title(self, value: str) -> None:
+        self._set_placeholder_text("titlePlaceholder", value)
+
     @property
     def body(self) -> Optional[str]:
-        """Body text with one line per paragraph, or ``None`` if this slide doesn't show a body."""
+        """Body text with one line per paragraph, or ``None`` if this slide doesn't show a body.
+
+        Assign a string with one line per paragraph, or a list of strings or
+        :class:`Paragraph` objects to set indent levels too.
+        """
         text = self.body_text
         return None if text is None else str(text)
+
+    @body.setter
+    def body(self, value: Union[str, Iterable[ParagraphInput]]) -> None:
+        self._set_placeholder_text("bodyPlaceholder", value)
 
     @property
     def paragraphs(self) -> List[Paragraph]:
@@ -162,12 +113,23 @@ class Slide:
         text = self.body_text
         return [] if text is None else text.paragraphs
 
+    def _notes_text(self) -> Optional[Text]:
+        if not self._slide.HasField("note"):
+            return None
+        note = self._package.deref(self._slide.note)
+        return Text(self._package, note.containedStorage.identifier)
+
     @property
     def notes(self) -> str:
-        if not self._slide.HasField("note"):
-            return ""
-        note = self._package.deref(self._slide.note)
-        return str(Text(self._package, self._package.deref(note.containedStorage)))
+        text = self._notes_text()
+        return "" if text is None else str(text)
+
+    @notes.setter
+    def notes(self, value: str) -> None:
+        text = self._notes_text()
+        if text is None:
+            raise ValueError(f"slide {self.index} has no notes storage")
+        text.set_paragraphs(value.split("\n"))
 
     @property
     def layout(self) -> str:
@@ -260,6 +222,9 @@ class Presentation:
 
         return to_markdown(self)
 
-    def save(self, path: PathLike) -> None:
-        """Write the presentation to ``path`` as a ``.key`` file."""
-        self.package.save(path)
+    def save(self, path: Optional[PathLike] = None) -> None:
+        """Write the presentation as a ``.key`` file, to ``path`` or back where it came from."""
+        target = path if path is not None else self.path
+        if target is None:
+            raise ValueError("no path to save to")
+        self.package.save(target)
