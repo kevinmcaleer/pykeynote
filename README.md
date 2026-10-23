@@ -9,6 +9,9 @@ plus images and media in `Data/`. Decoding comes from
 [keynote-parser](https://github.com/psobot/keynote-parser), which supports
 files saved by Keynote up to 14.5.
 
+For JavaScript and TypeScript, the same library is in [`js/`](js/) as the
+npm package `keynotejs`.
+
 ## Install
 
 ```sh

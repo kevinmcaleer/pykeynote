@@ -16,6 +16,8 @@ on:
 
 jobs:
   build:
+    # js-v* releases are the npm package; see release-js.yml.
+    if: "!startsWith(github.event.release.tag_name, 'js-v')"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

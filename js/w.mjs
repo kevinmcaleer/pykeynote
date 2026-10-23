@@ -1,0 +1,13 @@
+import { readFileSync } from "node:fs";
+import { fromMarkdown, Presentation } from "./dist/index.js";
+const deck = await fromMarkdown(readFileSync("/tmp/claude-0/cmp/sample.md","utf8"));
+await deck.save("/tmp/claude-0/cmp/js-from-md.key");
+const d = await Presentation.open("/tmp/claude-0/cmp/js-from-md.key");
+d.slide(1).title = "Why robots? (edited)";
+d.duplicateSlide(1);
+d.moveSlide(2, 0);
+d.deleteSlide(-1);
+d.addSlide("Title & Bullets", { title: "Added", body: [{text:"One"},{text:"Two",level:1}], notes: "n" , index: 1});
+await d.save("/tmp/claude-0/cmp/js-edited.key");
+console.log((await Presentation.open("/tmp/claude-0/cmp/js-edited.key")).toMarkdown());
+const w = await Presentation.create({aspect:"4:3"}); w.addSlide("Title",{title:"x"}); await w.save("/tmp/claude-0/cmp/js-43.key");
