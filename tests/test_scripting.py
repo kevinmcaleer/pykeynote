@@ -1,6 +1,7 @@
 import pytest
 
-from pykeynote import KeynoteError, Presentation, Transition, _osa, list_themes
+from pykeynote import KeynoteError, _osa
+from pykeynote.scripting import Presentation, Transition, list_themes
 from pykeynote.transitions import normalize_effect
 
 
