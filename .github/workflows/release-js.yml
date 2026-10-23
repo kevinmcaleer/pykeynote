@@ -1,12 +1,14 @@
 name: release-js
 
 # Publishes @kevsmac/keynotejs to npm with trusted publishing (no npm token stored).
-# Runs when a GitHub release tagged js-vX.Y.Z is published; the version must
-# match js/package.json.
+# Runs when a js-vX.Y.Z tag is pushed; the version must match js/package.json.
+# To release: bump "version" in js/package.json, merge, then
+#   git tag js-vX.Y.Z && git push origin js-vX.Y.Z
+# (creating a GitHub release with a new js-v tag pushes the tag too).
 
 on:
-  release:
-    types: [published]
+  push:
+    tags: ["js-v*"]
   workflow_dispatch:
     inputs:
       dry-run:
@@ -16,7 +18,6 @@ on:
 
 jobs:
   publish:
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'js-v')
     runs-on: ubuntu-latest
     environment:
       name: npm
@@ -37,7 +38,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - name: Check tag matches version
-        if: github.event_name == 'release'
+        if: github.event_name == 'push'
         run: |
           version=$(node -p "require('./package.json').version")
           tag="${GITHUB_REF_NAME#js-v}"
@@ -51,5 +52,5 @@ jobs:
           npm install "$GITHUB_WORKSPACE"/js/kevsmac-keynotejs-*.tgz
           node --input-type=module -e "import { Presentation } from '@kevsmac/keynotejs'; const d = await Presentation.create(); d.addSlide('Title', { title: 'Hi' }); console.log(d.toBytes().length, d.length)"
       - name: Publish
-        if: github.event_name == 'release' || !inputs.dry-run
+        if: github.event_name == 'push' || !inputs.dry-run
         run: npm publish --access public
