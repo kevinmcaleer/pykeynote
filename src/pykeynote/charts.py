@@ -151,6 +151,35 @@ class Chart(Drawable):
         self._chart.contains_default_data = False
         self._changed()
 
+    def _settings(self) -> Any:
+        """The chart's own settings (``TSCH.Generated.ChartNonStyleArchive``)."""
+        archive = self._package.deref(self._chart.chart_non_style)
+        for field in archive.Extensions:
+            if field.full_name == "TSCH.Generated.ChartNonStyleArchive.current":
+                return archive.Extensions[field]
+        raise ValueError("chart has no settings")
+
+    def _set_setting(self, name: str, value: bool) -> None:
+        setattr(self._settings(), name, value)
+        self._package.mark_changed(self._chart.chart_non_style.identifier)
+        self.slide._touched()
+
+    @property
+    def show_legend(self) -> bool:
+        return bool(self._settings().tschchartinfodefaultshowlegend)
+
+    @show_legend.setter
+    def show_legend(self, value: bool) -> None:
+        self._set_setting("tschchartinfodefaultshowlegend", bool(value))
+
+    @property
+    def show_title(self) -> bool:
+        return bool(self._settings().tschchartinfodefaultshowtitle)
+
+    @show_title.setter
+    def show_title(self, value: bool) -> None:
+        self._set_setting("tschchartinfodefaultshowtitle", bool(value))
+
     def to_dict(self) -> dict:
         d = super().to_dict()
         d.update(
@@ -188,6 +217,12 @@ def _donor_chart(donor: Package, chart_type: str) -> Any:
     raise ValueError(f"no {chart_type} chart to copy from")
 
 
+def copy_chart(importer: Any, root: int, src_slide_id: int, slide: "Slide") -> Chart:
+    """Copy the chart ``root`` from the importer's source package onto ``slide``. It isn't placed on the slide."""
+    id_map = importer.copy_drawable(root, src_slide_id, slide._slide_id)
+    return Chart(slide, id_map[root])
+
+
 def add_chart(
     slide: "Slide",
     chart_type: str,
@@ -199,9 +234,17 @@ def add_chart(
     width: float,
     height: float,
     style: int = 0,
-    series_by: str = "row",
+    series_by: Optional[str] = None,
+    legend: Optional[bool] = None,
 ) -> Chart:
     from .clone import Importer, theme_presets
+
+    round_chart = chart_type in ("pie", "donut")
+    if series_by is None:
+        # A pie shows the first value of each series, so its slices are best taken from the columns.
+        series_by = "column" if round_chart else "row"
+    if round_chart:
+        width = height = min(width, height)  # Keynote keeps pies square
 
     if chart_type not in CHART_TYPES:
         raise ValueError(f"chart type must be one of {', '.join(CHART_TYPES)}, not {chart_type!r}")
@@ -218,13 +261,14 @@ def add_chart(
         return re.sub(rf"^chart-{donor_style}-", f"chart-{style}-", name)
 
     importer = Importer(donor, p, rename=rename, presets={theme_presets(donor)["chart_presets"][donor_style]: presets[style]})
-    id_map = importer.copy_drawable(root, donor_slide, slide._slide_id)
-    chart = Chart(slide, id_map[root])
+    chart = copy_chart(importer, root, donor_slide, slide)
     g = chart._info.geometry
     g.position.x, g.position.y = float(x), float(y)
     g.size.width, g.size.height = float(width), float(height)
     chart.chart_type = chart_type
     chart.series_by = series_by
     chart.set_data(rows, row_names, column_names)
+    series = len(row_names) if series_by == "row" else len(column_names)
+    chart.show_legend = series > 1 if legend is None else legend
     place_on_slide(slide, chart.identifier)
     return chart

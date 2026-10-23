@@ -290,3 +290,76 @@ class Importer:
         self.dst.mark_changed(METADATA_ID)
         made[src_file] = (name, component)
         return name
+
+
+def owned_objects(package: Package, root: int, stop: Set[int]) -> List[int]:
+    """``root`` and every object it owns, short of styles, document objects and ``stop``."""
+    styles = set(package.ids_in_file(STYLESHEET_FILE))
+    out: List[int] = []
+    found: Set[int] = set()
+    todo = [root]
+    while todo:
+        i = todo.pop(0)
+        if i in found or i in stop or i in styles or i not in package:
+            continue
+        if package.file_of(i) == DOCUMENT_FILE:
+            continue
+        found.add(i)
+        out.append(i)
+        todo.extend(_header_refs(package, i))
+    return out
+
+
+def remove_objects(package: Package, ids: List[int]) -> None:
+    """Delete objects, with their files if they had components of their own, and every record of them."""
+    gone = set(ids)
+    engine_file = CALC_ENGINE_FILE
+    if engine_file in package._iwa:
+        engine_id = package.component_for_file(engine_file).identifier
+        tracker = package.get(engine_id).dependency_tracker
+        removed_owners = {package.get(i).internal_formula_owner_id for i in ids if type_name_of(package.get(i)) == "TSCE.FormulaOwnerDependenciesArchive"}
+        if removed_owners:
+            kept = [r.identifier for r in tracker.formula_owner_dependencies if r.identifier not in gone]
+            del tracker.formula_owner_dependencies[:]
+            for i in kept:
+                tracker.formula_owner_dependencies.add().identifier = i
+            entries = [e for e in tracker.owner_id_map.map_entry if e.internal_owner_id not in removed_owners]
+            del tracker.owner_id_map.map_entry[:]
+            for e in entries:
+                tracker.owner_id_map.map_entry.add().CopyFrom(e)
+            for i in gone:
+                package.remove_object_reference(engine_id, i)
+            package.mark_changed(engine_id)
+    if OBJECT_CONTAINER_FILE in package._iwa:
+        container_id = package.component_for_file(OBJECT_CONTAINER_FILE).identifier
+        container = package.get(container_id)
+        kept = [r.identifier for r in container.objects if r.identifier not in gone]
+        if len(kept) != len(container.objects):
+            del container.objects[:]
+            for i in kept:
+                container.objects.add().identifier = i
+            package.mark_changed(container_id)
+
+    components = {c.identifier for c in package.metadata.components}
+    for i in ids:
+        if i not in package:
+            continue
+        name = package.file_of(i)
+        if i in components:
+            package.remove_file(name)
+            package.remove_component(i)
+        else:
+            package.remove_segment(i)
+            component = package.component_for_file(name)
+            entries = [e for e in component.object_uuid_map_entries if e.identifier != i]
+            if len(entries) != len(component.object_uuid_map_entries):
+                del component.object_uuid_map_entries[:]
+                for e in entries:
+                    component.object_uuid_map_entries.add().CopyFrom(e)
+    for c in package.metadata.components:
+        refs = [e for e in c.external_references if not (e.HasField("object_identifier") and e.object_identifier in gone)]
+        if len(refs) != len(c.external_references):
+            del c.external_references[:]
+            for e in refs:
+                c.external_references.add().CopyFrom(e)
+    package.mark_changed(METADATA_ID)

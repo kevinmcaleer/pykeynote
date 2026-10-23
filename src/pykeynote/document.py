@@ -9,6 +9,7 @@ from typing import Any, Iterable, List, Optional, Sequence, Tuple, Union
 
 from . import builds as _builds
 from . import charts as _charts
+from . import tables as _tables
 from . import drawables as _drawables
 from . import slides
 from .builds import Build
@@ -315,18 +316,56 @@ class Slide:
         width: Optional[float] = None,
         height: Optional[float] = None,
         style: int = 0,
-        series_by: str = "row",
+        series_by: Optional[str] = None,
+        legend: Optional[bool] = None,
     ) -> Chart:
         """Add a chart of ``rows`` of values, one list per row name.
 
         ``chart_type`` is one of :data:`pykeynote.charts.CHART_TYPES`:
         ``"column"``, ``"bar"``, ``"line"``, ``"area"``, ``"pie"``,
         ``"donut"``, their ``"stacked"`` forms or ``"scatter"``. Each row is a
-        data series unless ``series_by="column"``. ``style`` picks one of the
-        theme's six chart styles.
+        data series unless ``series_by="column"``, which is the default for
+        pies and donuts: Keynote draws a pie from the first value of each
+        series, so the first row's values become the slices. Pies are kept
+        square. ``style`` picks one of the theme's six chart styles; the
+        legend shows when there is more than one series unless ``legend`` says.
         """
         x, y, width, height = self._default_frame(width, height, x, y, 900, 640)
-        return _charts.add_chart(self, chart_type, rows, row_names, column_names, x, y, width, height, style=style, series_by=series_by)
+        return _charts.add_chart(
+            self, chart_type, rows, row_names, column_names, x, y, width, height, style=style, series_by=series_by, legend=legend
+        )
+
+    def add_table(
+        self,
+        rows: Sequence[Sequence[Any]],
+        x: Optional[float] = None,
+        y: Optional[float] = None,
+        width: Optional[float] = None,
+        height: Optional[float] = None,
+        header_rows: int = 1,
+        header_columns: int = 0,
+        style: int = 0,
+        name: Optional[str] = None,
+    ) -> Table:
+        """Add a table of ``rows``: lists of text, numbers, True/False or None for an empty cell.
+
+        The first ``header_rows`` rows (and ``header_columns`` columns) are
+        headers. ``style`` picks one of the theme's six table styles. The
+        table is centred unless ``x`` and ``y`` are given; each row is 64
+        points high unless ``height`` is given.
+        """
+        n_rows = len(rows)
+        n_cols = max((len(r) for r in rows), default=0)
+        sw, sh = self.size_of_slide
+        w = width if width is not None else min(sw - 120, 300.0 * max(n_cols, 1))
+        h = height if height is not None else 64.0 * max(n_rows, 1)
+        x = (sw - w) / 2 if x is None else x
+        y = (sh - h) / 2 if y is None else y
+        return _tables.add_table(self, rows, x, y, w, h, header_rows=header_rows, header_columns=header_columns, style=style, name=name)
+
+    @property
+    def size_of_slide(self) -> Tuple[int, int]:
+        return self.presentation.size
 
     def delete_drawable(self, drawable: Drawable) -> None:
         """Remove a shape, text box, table or chart from the slide."""
@@ -348,6 +387,45 @@ class Slide:
             "transition": {"effect": t.effect, "duration": t.duration, "delay": t.delay, "automatic": t.automatic},
             "drawables": [d.to_dict() for d in self.drawables],
         }
+
+
+def _unshare_drawables(original: "Slide", copy: "Slide") -> None:
+    """Give a duplicated slide its own copies of the original's tables and charts.
+
+    Copying a slide's file copies its shapes, but tables and charts keep
+    objects in other files, which the copy would otherwise share.
+    """
+    from .clone import Importer
+
+    pairs = [(a, b) for a, b in zip(original.drawables, copy.drawables) if isinstance(a, (Table, Chart))]
+    if not pairs:
+        return
+    p = copy._package
+    importer = Importer(p, p)
+    s = copy._slide
+    for old, alias in pairs:
+        if isinstance(old, Table):
+            new = _tables.copy_table(importer, old.identifier, original._slide_id, copy)
+        else:
+            new = _charts.copy_chart(importer, old.identifier, original._slide_id, copy)
+        for field in ("owned_drawables", "drawables_z_order"):
+            for ref in getattr(s, field):
+                if ref.identifier == alias.identifier:
+                    ref.identifier = new.identifier
+        for build_ref in s.builds:
+            build = p.deref(build_ref)
+            if build.drawable.identifier == alias.identifier:
+                build.drawable.identifier = new.identifier
+                p.mark_changed(build_ref.identifier)
+        p.remove_object_reference(copy._slide_id, alias.identifier)
+        p.add_object_reference(copy._slide_id, new.identifier)
+        if alias.identifier != old.identifier:
+            # The chart itself was copied with the slide's file: drop that copy and what only it owns.
+            from .clone import owned_objects, remove_objects
+
+            slide_file = p.file_of(copy._slide_id)
+            remove_objects(p, [i for i in owned_objects(p, alias.identifier, {copy._slide_id}) if p.file_of(i) == slide_file])
+    p.mark_changed(copy._slide_id)
 
 
 TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
@@ -458,6 +536,11 @@ class Presentation:
 
     def delete_slide(self, index: int) -> None:
         index = self._check_index(index)
+        slide = self.slides[index]
+        # Tables and charts keep objects outside the slide's own file; remove those first.
+        for drawable in slide.drawables:
+            if isinstance(drawable, (Table, Chart)):
+                _drawables.delete_drawable(slide, drawable)
         slides.delete_slide(self.package, self._show_id, self._tree_index(index))
 
     def duplicate_slide(self, index: int, to: Optional[int] = None) -> Slide:
@@ -471,7 +554,10 @@ class Presentation:
         visible = self._node_ids()
         tree_to = len(full) if to >= len(visible) else full.index(visible[to])
         slides.duplicate_slide(self.package, self._show_id, full.index(node_id), tree_to)
-        return self.slides[to]
+        copy = self.slides[to]
+        original = Slide(self, type(self._show.slideTree.slides[0])(identifier=node_id), -1)
+        _unshare_drawables(original, copy)
+        return copy
 
     def add_slide(
         self,
@@ -635,6 +721,9 @@ class Presentation:
         self._show_id = target._show_id
         self._show = target._show
         self._prototypes = target._prototypes
+
+    def _all_tables(self) -> List[Table]:
+        return [t for s in self.slides for t in s.tables]
 
     def to_markdown(self) -> str:
         from .markdown import to_markdown

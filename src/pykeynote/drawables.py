@@ -286,6 +286,10 @@ class Drawable:
         w, h = self.size
         return {"type": self.kind, "x": x, "y": y, "width": w, "height": h}
 
+    def _owned_elsewhere(self, owned: List[int]) -> List[int]:
+        """Objects that belong to this drawable but that nothing in it refers to."""
+        return []
+
 
 # --- shapes -------------------------------------------------------------------
 
@@ -344,7 +348,9 @@ def _path_source(kind: str, width: float, height: float) -> Any:
         elif kind == "plus":
             p.point.x, p.point.y = width / 3, height / 3
         else:
-            p.point.x, p.point.y = width * 0.6, 0.5  # where the head starts, shaft thickness
+            # Keynote's defaults: the head's length in points, and the shaft's thickness as a fraction of the height.
+            head = 64.0 if kind == "arrow" else 44.0
+            p.point.x, p.point.y = min(head, width / (2 if kind == "arrow" else 4)), 0.34
         p.naturalSize.width, p.naturalSize.height = width, height
     else:
         raise ValueError(f"shape must be one of {', '.join(SHAPE_KINDS)}, not {kind!r}")
@@ -633,26 +639,13 @@ def add_shape(
 
 
 def delete_drawable(slide: "Slide", drawable: Drawable) -> None:
-    """Remove a drawable and everything it owns in the slide's file."""
-    p = slide._package
-    slide_file = p.file_of(slide._slide_id)
+    """Remove a drawable and everything it owns, wherever in the package that is."""
+    from .clone import owned_objects, remove_objects
+
     remove_from_slide(slide, drawable.identifier)
-    gone = set()
-    todo = [drawable.identifier]
-    while todo:
-        i = todo.pop()
-        if i in gone or i not in p or p.file_of(i) != slide_file:
-            continue
-        gone.add(i)
-        todo.extend(p.segment(i).header.message_infos[0].object_references)
-    extra = getattr(drawable, "_owned_elsewhere", lambda: [])()
-    for i in gone:
-        p.remove_segment(i)
-    for i in extra:
-        if i in p:
-            p.remove_segment(i)
-    forget_objects(p.component_for_file(slide_file), gone)
-    p.mark_changed(METADATA_ID)
+    ids = owned_objects(slide._package, drawable.identifier, {slide._slide_id})
+    ids += drawable._owned_elsewhere(ids)
+    remove_objects(slide._package, ids)
 
 
 def drawables_of(slide: "Slide") -> List[Drawable]:

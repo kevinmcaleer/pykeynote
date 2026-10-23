@@ -29,7 +29,7 @@ import uuid as uuidlib
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from .drawables import Drawable, place_on_slide
-from .package import Package, new_uuid_parts, walk_messages
+from .package import Package, _is_repeated, new_uuid_parts, walk_messages
 
 if TYPE_CHECKING:
     from .document import Slide
@@ -528,8 +528,14 @@ class Table(Drawable):
         d.update(name=self.name, header_rows=self.header_rows, header_columns=self.header_columns, rows=self.rows)
         return d
 
-    def _owned_elsewhere(self) -> List[int]:
-        return []
+    def _owned_elsewhere(self, owned: List[int]) -> List[int]:
+        # The table's formula owners in the calculation engine, and what they own.
+        from .clone import owned_objects
+
+        out: List[int] = []
+        for i in _table_owners(self._package, owned):
+            out += owned_objects(self._package, i, set(owned))
+        return out
 
 
 def _grid(rows: Sequence[Sequence[Value]]) -> List[List[Value]]:
@@ -557,3 +563,156 @@ def _set_uids(uid_map: Any, rows: int, columns: int) -> None:
         index_for_uid.extend(order)  # the index of each sorted UUID
         position = {index: pos for pos, index in enumerate(order)}
         uid_for_index.extend(position[i] for i in range(count))  # where each index's UUID sits in the sorted list
+
+
+# --- adding tables ----------------------------------------------------------------
+
+_INTERNAL_ID_FIELDS = ("internal_formula_owner_id", "internal_owner_id", "internal_owner_id_for_edge")
+_TABLE_FORMULAS = 6  # formulas each new table brings, by the count Keynote 14.5 keeps
+
+
+def _uuid_value(m: Any) -> int:
+    if m.DESCRIPTOR.full_name == "TSP.CFUUIDArchive":
+        return sum(getattr(m, f"uuid_w{i}") << (32 * i) for i in range(4))
+    return (m.upper << 64) | m.lower
+
+
+def _uuids_in(message: Any) -> set:
+    found = set()
+
+    def visit(m: Any) -> None:
+        if m.DESCRIPTOR.full_name in ("TSP.UUID", "TSP.CFUUIDArchive"):
+            found.add(_uuid_value(m))
+
+    walk_messages(message, visit)
+    return found
+
+
+def _calc_engine(package: Package) -> Tuple[int, Any]:
+    from .clone import CALC_ENGINE_FILE
+
+    identifier = package.component_for_file(CALC_ENGINE_FILE).identifier
+    return identifier, package.get(identifier)
+
+
+def _table_owners(donor: Package, closure: List[int]) -> List[int]:
+    """The calculation engine's ``FormulaOwnerDependenciesArchive`` objects for a table."""
+    uuids = set()
+    for i in closure:
+        uuids |= _uuids_in(donor.get(i))
+    _, engine = _calc_engine(donor)
+    deps = [donor.deref(r) for r in engine.dependency_tracker.formula_owner_dependencies]
+    ids = [r.identifier for r in engine.dependency_tracker.formula_owner_dependencies]
+    bases = {_uuid_value(d.base_owner_uid) for d in deps if d.HasField("base_owner_uid") and _uuid_value(d.formula_owner_uid) in uuids}
+    return [i for i, d in zip(ids, deps) if _uuid_value(d.formula_owner_uid) in uuids | bases]
+
+
+def _register_owners(package: Package, owner_ids: List[int]) -> None:
+    """Give copied formula owners new internal numbers and list them in the calculation engine."""
+    engine_id, engine = _calc_engine(package)
+    tracker = engine.dependency_tracker
+    used = [e.internal_owner_id for e in tracker.owner_id_map.map_entry]
+    used += [package.get(r.identifier).internal_formula_owner_id for r in tracker.formula_owner_dependencies if r.identifier in package]
+    next_id = max(used, default=0) + 1
+    internal: Dict[int, int] = {}
+    for i in owner_ids:
+        old = package.get(i).internal_formula_owner_id
+        internal[old] = next_id
+        next_id += 1
+
+    def renumber(message: Any) -> None:
+        def visit(m: Any) -> None:
+            for name in _INTERNAL_ID_FIELDS:
+                field = m.DESCRIPTOR.fields_by_name.get(name)
+                if field is None:
+                    continue
+                if _is_repeated(field):
+                    values = [internal.get(v, v) for v in getattr(m, name)]
+                    del getattr(m, name)[:]
+                    getattr(m, name).extend(values)
+                elif m.HasField(name) and getattr(m, name) in internal:
+                    setattr(m, name, internal[getattr(m, name)])
+
+        walk_messages(message, visit)
+
+    seen = set()
+    todo = list(owner_ids)
+    while todo:
+        i = todo.pop()
+        if i in seen:
+            continue
+        seen.add(i)
+        renumber(package.get(i))
+        package.mark_changed(i)
+        todo.extend(package.segment(i).header.message_infos[0].object_references)
+
+    for i in owner_ids:
+        deps = package.get(i)
+        entry = tracker.owner_id_map.map_entry.add()
+        entry.internal_owner_id = deps.internal_formula_owner_id
+        value = _uuid_value(deps.formula_owner_uid)
+        for n in range(4):
+            setattr(entry.owner_id, f"uuid_w{n}", (value >> (32 * n)) & 0xFFFFFFFF)
+        tracker.formula_owner_dependencies.add().identifier = i
+        package.add_object_reference(engine_id, i)
+    tracker.number_of_formulas += _TABLE_FORMULAS
+    package.mark_changed(engine_id)
+
+
+def copy_table(importer: Any, root: int, src_slide_id: int, slide: "Slide") -> Table:
+    """Copy the table ``root`` from the importer's source package onto ``slide``. It isn't placed on the slide."""
+    owners = _table_owners(importer.src, importer.closure(root, {src_slide_id}))
+    id_map = importer.copy_drawable(root, src_slide_id, slide._slide_id, extra=owners)
+    _register_owners(importer.dst, [id_map[i] for i in owners])
+    return Table(slide, id_map[root])
+
+
+def add_table(
+    slide: "Slide",
+    rows: Sequence[Sequence[Value]],
+    x: float,
+    y: float,
+    width: Optional[float],
+    height: Optional[float],
+    header_rows: int = 1,
+    header_columns: int = 0,
+    style: int = 0,
+    name: Optional[str] = None,
+) -> Table:
+    from .charts import parts_package
+    from .clone import Importer, theme_presets
+
+    grid = _grid(rows)
+    p = slide._package
+    presets = theme_presets(p).get("table_style_presets", [])
+    if not 0 <= style < len(presets):
+        raise ValueError(f"style must be 0 to {len(presets) - 1}, one of the theme's table styles")
+    donor = parts_package()
+    root, donor_info = next(iter(donor.objects("TST.TableInfoArchive")))
+    donor_slide = donor_info.super.parent.identifier
+    donor_model = donor.deref(donor_info.tableModel)
+    donor_presets = theme_presets(donor)["table_style_presets"]
+    donor_style = donor_presets.index(donor_model.table_style_preset.identifier)
+
+    def rename(style_name: str) -> str:
+        # Table styles are named e.g. "table-0-tableStyle", "tableCell-0-bodyStyle".
+        return re.sub(rf"^(table\w*)-{donor_style}-", rf"\g<1>-{style}-", style_name)
+
+    table = copy_table(Importer(donor, p, rename=rename, presets={donor_presets[donor_style]: presets[style]}), root, donor_slide, slide)
+    m = table._model
+    m.table_name = name or f"Table {len(slide.presentation._all_tables()) + 1}"
+    m.number_of_header_rows = 0
+    m.number_of_header_columns = 0
+    m.number_of_footer_rows = 0
+    g = table._info.geometry
+    g.position.x, g.position.y = float(x), float(y)
+    table._resize(len(grid), len(grid[0]))
+    table._write(grid, keep={})
+    table.set_headers(rows=min(header_rows, len(grid)), columns=min(header_columns, len(grid[0])))
+    columns = len(grid[0])
+    width = width if width is not None else min(slide.presentation.size[0] - 2 * x if x < slide.presentation.size[0] / 2 else 1600.0, 300.0 * columns)
+    row_height = 64.0 if height is None else height / len(grid)
+    table.set_column_widths([width / columns] * columns)
+    table.set_row_heights([row_height] * len(grid))
+    place_on_slide(slide, table.identifier)
+    return table
