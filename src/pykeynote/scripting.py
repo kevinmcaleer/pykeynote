@@ -60,7 +60,6 @@ function main(Keynote, args) {
     theme: doc.documentTheme().name(),
     width: doc.width(),
     height: doc.height(),
-    layouts: doc.masterSlides.name(),
     slide_count: doc.slides.length,
   };
 }
@@ -84,7 +83,6 @@ function readSlide(s, index) {
   const tp = s.transitionProperties();
   return {
     index: index,
-    layout: readText(() => s.baseSlide().name()),
     title: s.titleShowing() ? readText(() => s.defaultTitleItem().objectText()) : null,
     body: s.bodyShowing() ? readText(() => s.defaultBodyItem().objectText()) : null,
     notes: readText(() => s.presenterNotes()),
@@ -119,7 +117,6 @@ _UPDATE_SLIDE = """
 function main(Keynote, args) {
   const doc = Keynote.documents.byId(args.doc);
   const s = doc.slides[args.index];
-  if ("layout" in args) s.baseSlide = doc.masterSlides.byName(args.layout);
   if ("title" in args) {
     s.titleShowing = true;
     s.defaultTitleItem.objectText = args.title;
@@ -141,7 +138,50 @@ function main(Keynote, args) {
 }
 """
 
-# --- AppleScript, for the few things JXA handles badly. ------------------------
+# --- AppleScript, for the things JXA handles badly. ---------------------------
+# JXA can't read a document's master slides on Keynote 14.5 (error -1700), so
+# everything to do with layouts goes through AppleScript. Layout names can
+# contain commas, so lists come back one name per line.
+
+_LAYOUT_NAMES = """
+on run argv
+  tell application "Keynote"
+    set names to name of every master slide of document id (item 1 of argv)
+  end tell
+  set AppleScript's text item delimiters to linefeed
+  return names as text
+end run
+"""
+
+_SLIDE_LAYOUTS = """
+on run argv
+  set out to {}
+  tell application "Keynote"
+    repeat with s in slides of document id (item 1 of argv)
+      set end of out to name of base slide of s
+    end repeat
+  end tell
+  set AppleScript's text item delimiters to linefeed
+  return out as text
+end run
+"""
+
+_SLIDE_LAYOUT = """
+on run argv
+  tell application "Keynote"
+    return name of base slide of slide ((item 2 of argv) as integer) of document id (item 1 of argv)
+  end tell
+end run
+"""
+
+_SET_LAYOUT = """
+on run argv
+  tell application "Keynote"
+    set d to document id (item 1 of argv)
+    set base slide of slide ((item 2 of argv) as integer) of d to master slide (item 3 of argv) of d
+  end tell
+end run
+"""
 
 _ADD_SLIDE = """
 on run argv
@@ -206,6 +246,10 @@ def _check_fields(fields: Dict[str, Any]) -> None:
         raise TypeError(f"Unknown slide fields: {', '.join(sorted(unknown))}")
 
 
+def _lines(text: str) -> List[str]:
+    return text.split("\n") if text else []
+
+
 def _num(value: Optional[float]) -> str:
     # repr keeps "." as the decimal separator whatever the Mac's locale.
     return "" if value is None else repr(float(value))
@@ -229,12 +273,18 @@ class Slide:
         return {"doc": self.presentation.id, "index": self.index, **extra}
 
     def read(self) -> Dict[str, Any]:
-        """Every field of the slide in one call: layout, title, body, notes, skipped, transition."""
-        return _osa.jxa(_READ_SLIDE, **self._args())
+        """Every field of the slide: layout, title, body, notes, skipped, transition."""
+        data = _osa.jxa(_READ_SLIDE, **self._args())
+        data["layout"] = _osa.applescript(_SLIDE_LAYOUT, self.presentation.id, str(self.index + 1))
+        return data
 
     def update(self, **fields: Any) -> None:
-        """Set several of ``layout``, ``title``, ``body``, ``notes`` and ``skipped`` in one call."""
+        """Set several of ``layout``, ``title``, ``body``, ``notes`` and ``skipped`` at once."""
         _check_fields(fields)
+        if "layout" in fields:
+            # Change the layout first, so the text lands in the new layout's placeholders.
+            layout = fields.pop("layout")
+            _osa.applescript(_SET_LAYOUT, self.presentation.id, str(self.index + 1), layout)
         if fields:
             _osa.jxa(_UPDATE_SLIDE, **self._args(**fields))
 
@@ -358,7 +408,7 @@ class Presentation:
         return f"<Presentation {self.name!r}>"
 
     def info(self) -> Dict[str, Any]:
-        """Name, file path, theme, size, layout names and slide count in one call."""
+        """Name, file path, theme, size and slide count in one call."""
         return _osa.jxa(_DOC_INFO, doc=self.id)
 
     @property
@@ -380,7 +430,7 @@ class Presentation:
     @property
     def layouts(self) -> List[str]:
         """Names of the master slides available in this presentation's theme."""
-        return self.info()["layouts"]
+        return _lines(_osa.applescript(_LAYOUT_NAMES, self.id))
 
     def __len__(self) -> int:
         return self.info()["slide_count"]
@@ -404,8 +454,11 @@ class Presentation:
         return [Slide(self, i) for i in range(len(self))]
 
     def read_slides(self) -> List[Dict[str, Any]]:
-        """Every field of every slide, in one call."""
-        return _osa.jxa(_READ_ALL, doc=self.id)
+        """Every field of every slide."""
+        rows = _osa.jxa(_READ_ALL, doc=self.id)
+        for row, layout in zip(rows, _lines(_osa.applescript(_SLIDE_LAYOUTS, self.id))):
+            row["layout"] = layout
+        return rows
 
     def add_slide(
         self,
