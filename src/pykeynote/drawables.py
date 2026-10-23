@@ -286,6 +286,9 @@ class Drawable:
         w, h = self.size
         return {"type": self.kind, "x": x, "y": y, "width": w, "height": h}
 
+    def _before_delete(self) -> None:
+        pass
+
     def _owned_elsewhere(self, owned: List[int]) -> List[int]:
         """Objects that belong to this drawable but that nothing in it refers to."""
         return []
@@ -642,6 +645,7 @@ def delete_drawable(slide: "Slide", drawable: Drawable) -> None:
     """Remove a drawable and everything it owns, wherever in the package that is."""
     from .clone import owned_objects, remove_objects
 
+    drawable._before_delete()
     remove_from_slide(slide, drawable.identifier)
     ids = owned_objects(slide._package, drawable.identifier, {slide._slide_id})
     ids += drawable._owned_elsewhere(ids)

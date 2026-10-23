@@ -36,7 +36,8 @@ if TYPE_CHECKING:
 
 Value = Union[None, str, int, float, bool]
 
-_TILE_SIZE = 256
+_TILE_SIZE = 256  # rows per tile
+_OFFSETS = 255  # cell offsets per tile row, as Keynote writes them
 _EMPTY, _NUMBER, _TEXT, _DATE, _BOOL, _DURATION, _ERROR, _RICH = 0, 2, 3, 5, 6, 7, 8, 9
 
 _DECIMAL, _DOUBLE, _SECONDS, _STRING, _RICH_ID = 0x1, 0x2, 0x4, 0x8, 0x10
@@ -151,9 +152,9 @@ def _tile_cells(row: Any) -> Dict[int, Cell]:
 
 def _write_tile_row(row: Any, cells: Dict[int, Cell]) -> None:
     buf = b""
-    offsets = [0xFFFF] * _TILE_SIZE
+    offsets = [0xFFFF] * _OFFSETS
     pre_buf = b""
-    pre_offsets = [0xFFFF] * _TILE_SIZE
+    pre_offsets = [0xFFFF] * _OFFSETS
     for column in sorted(cells):
         record = cells[column].pack()
         offsets[column] = len(buf)
@@ -162,12 +163,12 @@ def _write_tile_row(row: Any, cells: Dict[int, Cell]) -> None:
         pre_offsets[column] = len(pre_buf)
         pre_buf += b"\x04" + b"\0" * 11
     row.cell_storage_buffer = buf
-    row.cell_offsets = struct.pack(f"<{_TILE_SIZE}H", *offsets)
+    row.cell_offsets = struct.pack(f"<{_OFFSETS}H", *offsets)
     row.cell_storage_buffer_pre_bnc = pre_buf
-    row.cell_offsets_pre_bnc = struct.pack(f"<{_TILE_SIZE}H", *pre_offsets)
+    row.cell_offsets_pre_bnc = struct.pack(f"<{_OFFSETS}H", *pre_offsets)
     row.cell_count = len(cells)
     row.storage_version = 5
-    row.has_wide_offsets = False
+    row.ClearField("has_wide_offsets")
     if len(buf) > 0xFFFE:
         raise ValueError("too much data in one table row")
 
@@ -479,8 +480,8 @@ class Table(Drawable):
     def _resize(self, rows: int, columns: int) -> None:
         if rows < 1 or columns < 1:
             raise ValueError("a table needs at least one row and one column")
-        if columns > _TILE_SIZE:
-            raise ValueError(f"tables of more than {_TILE_SIZE} columns aren't supported")
+        if columns > _OFFSETS:
+            raise ValueError(f"tables of more than {_OFFSETS} columns aren't supported")
         m = self._model
         for bucket, count, default in (
             (self._row_bucket(), rows, self.row_heights[-1]),
@@ -527,6 +528,9 @@ class Table(Drawable):
         d = super().to_dict()
         d.update(name=self.name, header_rows=self.header_rows, header_columns=self.header_columns, rows=self.rows)
         return d
+
+    def _before_delete(self) -> None:
+        _unregister_header_names(self._package, self)
 
     def _owned_elsewhere(self, owned: List[int]) -> List[int]:
         # The table's formula owners in the calculation engine, and what they own.
@@ -661,10 +665,141 @@ def _register_owners(package: Package, owner_ids: List[int]) -> None:
 
 def copy_table(importer: Any, root: int, src_slide_id: int, slide: "Slide") -> Table:
     """Copy the table ``root`` from the importer's source package onto ``slide``. It isn't placed on the slide."""
+    if _UPGRADE_ENGINE:
+        _upgrade_calc_engine(importer.dst)
     owners = _table_owners(importer.src, importer.closure(root, {src_slide_id}))
     id_map = importer.copy_drawable(root, src_slide_id, slide._slide_id, extra=owners)
     _register_owners(importer.dst, [id_map[i] for i in owners])
-    return Table(slide, id_map[root])
+    table = Table(slide, id_map[root])
+    if _REGISTER_HEADER_NAMES:
+        _register_header_names(importer.dst, table)
+    return table
+
+
+# The calculation engine format Keynote 14.5 saves, with formula owners kept in
+# their own archives rather than inline. Seed templates may predate it.
+_ENGINE_FEATURE = "TSCEReduceCalcEngineMsgSize"
+_ENGINE_VERSION = (3, 2, 10)
+_UPGRADE_ENGINE = True
+_REGISTER_HEADER_NAMES = True
+
+
+def _upgrade_calc_engine(package: Package) -> None:
+    """Switch an older calculation engine to the layout Keynote 14.5 writes, so it finds new tables."""
+    from .clone import CALC_ENGINE_FILE
+
+    component = package.component_for_file(CALC_ENGINE_FILE)
+    if any(f.identifier == _ENGINE_FEATURE for f in component.feature_infos):
+        return
+    feature = component.feature_infos.add()
+    feature.identifier = _ENGINE_FEATURE
+    feature.read_version.extend(_ENGINE_VERSION)
+    feature.write_version.extend(_ENGINE_VERSION)
+    del component.document_read_version[:]
+    component.document_read_version.extend(_ENGINE_VERSION)
+    del component.document_write_version[:]
+    component.document_write_version.extend(_ENGINE_VERSION)
+    engine_id, engine = _calc_engine(package)
+    tracker = engine.dependency_tracker
+    owners = {_uuid_value(package.get(r.identifier).formula_owner_uid) for r in tracker.formula_owner_dependencies}
+    inline = [_uuid_value(i.formula_owner_id) for i in tracker.formula_owner_info]
+    if all(u in owners for u in inline):
+        tracker.ClearField("formula_owner_info")  # each one is also kept as its own archive
+    # The header name manager names the named-reference manager's owner.
+    names = package.deref(engine.header_name_manager)
+    for r in tracker.formula_owner_dependencies:
+        deps = package.get(r.identifier)
+        if deps.owner_kind == 7 and not (names.nrm_owner_uid.lower or names.nrm_owner_uid.upper):
+            names.nrm_owner_uid.CopyFrom(deps.formula_owner_uid)
+            package.mark_changed(engine.header_name_manager.identifier)
+    package.mark_changed(engine_id)
+    from .package import METADATA_ID
+
+    package.mark_changed(METADATA_ID)
+
+
+def _register_header_names(package: Package, table: "Table") -> None:
+    """List a new table with the header name manager, as Keynote does for every table."""
+    engine_id, engine = _calc_engine(package)
+    names = package.deref(engine.header_name_manager)
+    tracker = engine.dependency_tracker
+    document_owner = None
+    for r in tracker.formula_owner_dependencies:
+        deps = package.get(r.identifier)
+        if _uuid_value(deps.formula_owner_uid) == _uuid_value(names.owner_uid):
+            document_owner = r.identifier
+    if document_owner is None:
+        return
+    deps = package.get(document_owner)
+    used = {rec.column for rec in deps.cell_dependencies.cell_record if rec.row == 1}
+    used |= {e.per_table_precedent.column for e in names.per_tables}
+    column = max(used, default=-1) + 1
+
+    m = table._model
+    uid_map = package.deref(m.base_column_row_uids)
+    entry = names.per_tables.add()
+    entry.table_uid.CopyFrom(_table_uid(package, table))
+    entry.per_table_precedent.column = column
+    entry.per_table_precedent.row = 1
+    for row in range(m.number_of_header_rows):
+        entry.header_row_uids.add().CopyFrom(uid_map.sorted_row_uids[uid_map.row_uid_for_index[row]])
+    package.mark_changed(engine.header_name_manager.identifier)
+
+    record = deps.cell_dependencies.cell_record.add(column=column, row=1)
+    record.expanded_edges.edge_without_owner_rows.append(0)
+    record.expanded_edges.edge_without_owner_columns.append(0)
+    for tile_ref in deps.tiled_cell_dependencies.cell_record_tiles:
+        tile = package.deref(tile_ref)
+        added = tile.cell_records.add(column=column, row=1)
+        added.expanded_edges.edge_without_owner_rows.append(0)
+        added.expanded_edges.edge_without_owner_columns.append(0)
+        package.mark_changed(tile_ref.identifier)
+        break
+    package.mark_changed(document_owner)
+
+
+def _unregister_header_names(package: Package, table: "Table") -> None:
+    try:
+        uid = _uuid_value(_table_uid(package, table))
+    except ValueError:
+        return
+    engine_id, engine = _calc_engine(package)
+    names = package.deref(engine.header_name_manager)
+    entries = [e for e in names.per_tables if _uuid_value(e.table_uid) != uid]
+    gone = {e.per_table_precedent.column for e in names.per_tables if _uuid_value(e.table_uid) == uid}
+    if not gone:
+        return
+    del names.per_tables[:]
+    for e in entries:
+        names.per_tables.add().CopyFrom(e)
+    package.mark_changed(engine.header_name_manager.identifier)
+    for r in engine.dependency_tracker.formula_owner_dependencies:
+        deps = package.get(r.identifier)
+        if _uuid_value(deps.formula_owner_uid) != _uuid_value(names.owner_uid):
+            continue
+        records = [c for c in deps.cell_dependencies.cell_record if not (c.row == 1 and c.column in gone)]
+        del deps.cell_dependencies.cell_record[:]
+        for c in records:
+            deps.cell_dependencies.cell_record.add().CopyFrom(c)
+        for tile_ref in deps.tiled_cell_dependencies.cell_record_tiles:
+            tile = package.deref(tile_ref)
+            records = [c for c in tile.cell_records if not (c.row == 1 and c.column in gone)]
+            del tile.cell_records[:]
+            for c in records:
+                tile.cell_records.add().CopyFrom(c)
+            package.mark_changed(tile_ref.identifier)
+        package.mark_changed(r.identifier)
+
+
+def _table_uid(package: Package, table: "Table") -> Any:
+    """The UUID the calculation engine knows the table by: the owner every other owner of it is based on."""
+    _, engine = _calc_engine(package)
+    model_uuids = _uuids_in(table._model) | _uuids_in(table._archive)
+    for r in engine.dependency_tracker.formula_owner_dependencies:
+        deps = package.get(r.identifier)
+        if deps.HasField("base_owner_uid") and _uuid_value(deps.formula_owner_uid) in model_uuids:
+            return deps.base_owner_uid
+    raise ValueError("the table has no formula owners")
 
 
 def add_table(

@@ -16,7 +16,7 @@ from .builds import Build
 from .charts import Chart
 from .drawables import Color, Drawable, Shape
 from .tables import Table
-from .package import Package, PathLike
+from .package import Package, PathLike, remap_references
 from .text import Paragraph, ParagraphInput, Text
 
 
@@ -408,10 +408,7 @@ def _unshare_drawables(original: "Slide", copy: "Slide") -> None:
             new = _tables.copy_table(importer, old.identifier, original._slide_id, copy)
         else:
             new = _charts.copy_chart(importer, old.identifier, original._slide_id, copy)
-        for field in ("owned_drawables", "drawables_z_order"):
-            for ref in getattr(s, field):
-                if ref.identifier == alias.identifier:
-                    ref.identifier = new.identifier
+        remap_references(s, {alias.identifier: new.identifier})  # drawables, z-order and the like
         for build_ref in s.builds:
             build = p.deref(build_ref)
             if build.drawable.identifier == alias.identifier:
