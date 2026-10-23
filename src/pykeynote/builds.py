@@ -74,12 +74,16 @@ def _target_name(slide: "Slide", drawable_id: int) -> Union[str, int]:
 
 def read_builds(slide: "Slide") -> List[Build]:
     p = slide._package
+    # Play order is the order of the chunks. Keynote doesn't keep
+    # ``builds`` in that order when it saves, so sort by each build's first chunk.
     steps: dict = {}
     for ref in slide._slide.buildChunks:
         build_id = p.deref(ref).build.identifier
         steps[build_id] = steps.get(build_id, 0) + 1
+    first = {build_id: i for i, build_id in enumerate(steps)}
+    refs = sorted(slide._slide.builds, key=lambda r: first.get(r.identifier, len(first)))
     out = []
-    for ref in slide._slide.builds:
+    for ref in refs:
         b = p.deref(ref)
         a = b.attributes.animationAttributes
         out.append(

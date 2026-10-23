@@ -32,6 +32,19 @@ def test_add_builds(tmp_path):
     check_consistent(again)
 
 
+def test_builds_listed_in_play_order(tmp_path):
+    # Keynote 14.5 reorders SlideArchive.builds on save but keeps the chunks in play order.
+    deck = Presentation.new()
+    slide = deck.add_slide("Title & Bullets", title="T", body="a\nb")
+    slide.add_build("title", "move in")
+    slide.add_build("body", "dissolve")
+    refs = list(slide._slide.builds)
+    del slide._slide.builds[:]
+    for r in reversed(refs):
+        slide._slide.builds.add().CopyFrom(r)
+    assert [b.target for b in slide.builds] == ["title", "body"]
+
+
 def test_build_all_at_once_and_out(tmp_path):
     deck = Presentation.new()
     slide = deck.add_slide("Title & Bullets", title="T", body="a\nb")
