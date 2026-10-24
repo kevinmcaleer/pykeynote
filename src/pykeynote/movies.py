@@ -107,7 +107,7 @@ def media_info(data: bytes) -> Tuple[str, float, Optional[Tuple[int, int]]]:
                 w, h = struct.unpack(">II", data[e - 8 : e])
                 track["size"] = (w >> 16, h >> 16)
             elif kind == b"hdlr":
-                track["handler"] = data[s + 8 : s + 12]
+                track.setdefault("handler", data[s + 8 : s + 12])  # QuickTime adds a data handler later, in minf
             elif kind in _CONTAINERS:
                 walk(s, e, track)
 

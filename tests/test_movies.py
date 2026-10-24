@@ -48,7 +48,10 @@ def test_media_info(keynote_media):
     tkhd = struct.pack(">I4s", 8 + len(tkhd), b"tkhd") + tkhd
     hdlr = b"\x00" * 8 + b"vide" + b"\x00" * 12
     hdlr = struct.pack(">I4s", 8 + len(hdlr), b"hdlr") + hdlr
-    mdia = struct.pack(">I4s", 8 + len(hdlr), b"mdia") + hdlr
+    # QuickTime puts a second, data handler box in minf, after the media handler.
+    dhlr = b"\x00" * 8 + b"alis" + b"\x00" * 12
+    minf = struct.pack(">I4s", 8 + 8 + len(dhlr), b"minf") + struct.pack(">I4s", 8 + len(dhlr), b"hdlr") + dhlr
+    mdia = struct.pack(">I4s", 8 + len(hdlr) + len(minf), b"mdia") + hdlr + minf
     trak = struct.pack(">I4s", 8 + len(tkhd) + len(mdia), b"trak") + tkhd + mdia
     body = mvhd + trak
     moov = struct.pack(">I4sQ", 1, b"moov", 16 + len(body)) + body
