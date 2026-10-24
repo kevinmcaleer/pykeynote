@@ -123,14 +123,21 @@ export function slideToMarkdown(slide: Slide, options: ToMarkdownOptions = {}, n
   }
 
   const title = slide.title;
+  let subtitleIsBody = false;
   if (title !== null && title.trim()) {
     lines.push("# " + title.trim().split(/\s+/).join(" "));
-    const subtitle = slide.subtitle;
-    if (subtitle !== null) lines.push("## " + subtitle.trim().split(/\s+/).join(" "));
+    let subtitle = slide.subtitle;
+    const filled = slide.paragraphs.filter((p) => p.text.trim());
+    // a body subtitle of several lines stays body text
+    if (subtitle !== null && slide.bodyIsSubtitle() && (filled.length !== 1 || subtitle.includes("\n"))) subtitle = null;
+    if (subtitle !== null) {
+      lines.push("## " + subtitle.trim().split(/\s+/).join(" "));
+      subtitleIsBody = slide.bodyIsSubtitle();
+    }
   }
 
   const body: string[] = [];
-  for (const para of slide.paragraphs) {
+  for (const para of subtitleIsBody ? [] : slide.paragraphs) {
     const text = para.text.replaceAll("\n", "<br>").trim();
     if (!text) continue;
     if (para.bulleted) {
@@ -228,6 +235,7 @@ export function defaultLayout(spec: SlideSpec): string {
     return photos === 1 ? "Photo" : "Photo - 3 Up";
   }
   if (spec.tables?.length && !spec.paragraphs.length) return spec.title ? "Title Only" : "Blank";
+  if (spec.title && spec.subtitle !== null && !spec.paragraphs.length) return "Title"; // a title card: its body is the subtitle
   if (spec.title && spec.paragraphs.length) return bulleted ? "Title & Bullets" : "Title";
   if (spec.title) return "Title Only";
   if (spec.paragraphs.length) return bulleted ? "Bullets" : "Statement";

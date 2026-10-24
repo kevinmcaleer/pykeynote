@@ -330,14 +330,22 @@ class Slide:
         x, y, width, height = self._default_frame(width, height, x, y, 600, 80)
         return _drawables.add_shape(self, "text box", x, y, width, height, text=text)
 
-    def add_subtitle(self, text: Union[str, Iterable[ParagraphInput]]) -> Shape:
+    def add_subtitle(self, text: Union[str, Iterable[ParagraphInput]]) -> Optional[Shape]:
         """Give the slide a subtitle under its title, in the theme's Subtitle paragraph style.
 
-        Layouts such as Basic White's "Title & Bullets" come with an empty
-        subtitle text box, which this fills. Otherwise it adds one that spans
-        the title's width and tucks under its last line, as Keynote places it.
-        Builds can target it as ``"subtitle"``.
+        On layouts such as "Title", whose body placeholder is the
+        subtitle ("Presentation Subtitle"), this fills the body. Layouts
+        such as Basic White's "Title & Bullets" come with an empty subtitle
+        text box, which this fills. Otherwise it adds one that spans the
+        title's width and tucks under its last line, as Keynote places it.
+        Builds can target it as ``"subtitle"``. Returns the text box, or
+        ``None`` when the subtitle is the body placeholder.
         """
+        if self._body_is_subtitle():
+            if (self.body or "").strip():
+                raise ValueError(f"slide {self.index} already has a subtitle")
+            self.body = text
+            return None
         shape = self._subtitle_shape()
         if shape is not None:
             if shape.text.strip():
@@ -366,11 +374,16 @@ class Slide:
     @property
     def subtitle(self) -> Optional[str]:
         """The subtitle under the title (see :meth:`add_subtitle`), or ``None`` if it has none or it is empty."""
+        if self._body_is_subtitle():
+            return self.body if (self.body or "").strip() else None
         shape = self._subtitle_shape()
         return shape.text if shape is not None and shape.text.strip() else None
 
     @subtitle.setter
     def subtitle(self, value: Optional[str]) -> None:
+        if self._body_is_subtitle():
+            self.body = value or ""
+            return
         shape = self._subtitle_shape()
         if shape is not None:
             shape.text = value or ""
@@ -379,6 +392,11 @@ class Slide:
 
     def _subtitle_shape(self) -> Optional[Shape]:
         return next((d for d in self.shapes if d.is_subtitle), None)
+
+    def _body_is_subtitle(self) -> bool:
+        """Whether the layout's body placeholder is its subtitle, as on "Title" ("Presentation Subtitle")."""
+        body = self.body_text
+        return body is not None and _drawables.is_subtitle_style(_drawables.paragraph_style_name(self._package, body))
 
     def add_chart(
         self,
@@ -933,7 +951,7 @@ class Presentation:
             if old_a.HasField("direction"):
                 new._slide.transition.attributes.animationAttributes.direction = old_a.direction
             new.skipped = old.skipped
-            if old.subtitle is not None and new.title is not None:
+            if old.subtitle is not None and new.title is not None and new.subtitle is None:
                 new.add_subtitle(old.subtitle)
             for b in old.builds:
                 if b.target == "subtitle":
@@ -965,7 +983,8 @@ class Presentation:
         ``{"effect": "wipe", "start": "after previous", "delay": 0.1}``. A
         slide's existing builds are replaced, and a build is left out where
         the slide doesn't show that text or it is empty. Builds play title,
-        then subtitle, then body.
+        then subtitle, then body. On a layout whose body is its subtitle,
+        such as "Title", the body gets ``subtitle_build``.
         """
         indexes = range(len(self)) if slides is None else [self._check_index(i) for i in slides]
         chosen = [self[i] for i in indexes]
@@ -979,6 +998,8 @@ class Presentation:
             for target, build in (("title", title_build), ("subtitle", subtitle_build), ("body", body_build)):
                 if build is None or not (getattr(slide, target) or "").strip():
                     continue
+                if target == "body" and slide._body_is_subtitle():
+                    continue  # the body is the subtitle, built by subtitle_build
                 args = {"effect": build} if isinstance(build, str) else dict(build)
                 slide.add_build(target, **args)
 

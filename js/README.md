@@ -107,7 +107,8 @@ build starts the way `start` says.
 `direction` is `"from left"`, `"from right"`, `"from top"` or `"from
 bottom"`, for effects that move. Each build in `slide.builds` reports
 `start`, `delay` and `direction`, and `slide.subtitle` reads or sets the
-subtitle.
+subtitle. On the "Title" layouts the subtitle is the body placeholder
+("Presentation Subtitle"), which `addSubtitle` fills.
 
 ## Images, shapes, tables and charts
 

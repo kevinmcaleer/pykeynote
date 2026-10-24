@@ -81,6 +81,30 @@ def subtitle_style(package: Package) -> Optional[str]:
     return min(names, key=lambda n: int(n.split("-")[1])) if names else None
 
 
+def is_subtitle_style(name: Optional[str]) -> bool:
+    """Whether a paragraph style name is one of the theme's subtitle styles, e.g. "Subtitle Alt"."""
+    return name is not None and re.search(r"-paragraphstyle-Subtitle\b", name) is not None
+
+
+def paragraph_style_name(package: Package, text: Text) -> Optional[str]:
+    """The theme's name for the paragraph style of the text's first paragraph, or of the style it varies."""
+    entries = text._storage.table_para_style.entries
+    if not entries:
+        return None
+    names = {v: k for k, v in named_styles(package).items()}
+    style_id = entries[0].object.identifier
+    while style_id:
+        if style_id in names:
+            return names[style_id]
+        base = package.get(style_id).super if style_id in package else None
+        while base is not None and "parent" not in base.DESCRIPTOR.fields_by_name:
+            base = getattr(base, "super", None)
+        if base is None or not base.HasField("parent"):
+            return None
+        style_id = base.parent.identifier
+    return None
+
+
 def add_variation_style(package: Package, parent_id: int) -> Tuple[int, Any]:
     """A new style based on ``parent_id`` that can override some of its properties.
 
@@ -508,21 +532,7 @@ class Shape(Drawable):
         t = self.text_storage
         if not self.is_text_box or t is None:
             return False
-        name = subtitle_style(self._package)
-        entries = t._storage.table_para_style.entries
-        if name is None or not entries:
-            return False
-        style_id, wanted = entries[0].object.identifier, style_named(self._package, name)
-        while style_id:  # the style or a variation of it
-            if style_id == wanted:
-                return True
-            base = self._package.get(style_id).super if style_id in self._package else None
-            while base is not None and "parent" not in base.DESCRIPTOR.fields_by_name:
-                base = getattr(base, "super", None)
-            if base is None or not base.HasField("parent"):
-                return False
-            style_id = base.parent.identifier
-        return False
+        return is_subtitle_style(paragraph_style_name(self._package, t))
 
     @property
     def text_storage(self) -> Optional[Text]:

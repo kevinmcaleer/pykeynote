@@ -178,7 +178,9 @@ function effectNameOf(effectId: string): string {
 function targetName(slide: Slide, drawableId: number): "title" | "subtitle" | "body" | number {
   const s = slide.slide;
   if (has(s, "titlePlaceholder") && s.titlePlaceholder.identifier === drawableId) return "title";
-  if (has(s, "bodyPlaceholder") && s.bodyPlaceholder.identifier === drawableId) return "body";
+  if (has(s, "bodyPlaceholder") && s.bodyPlaceholder.identifier === drawableId) {
+    return slide.bodyIsSubtitle() ? "subtitle" : "body";
+  }
   if (slide.subtitleShape()?.identifier === drawableId) return "subtitle";
   return drawableId;
 }
@@ -221,6 +223,7 @@ export function readBuilds(slide: Slide): Build[] {
 function resolveTarget(slide: Slide, target: BuildTarget): number {
   const s = slide.slide;
   const shown = new Set((s.drawables_z_order as Message[]).map((r) => r.identifier));
+  if (target === "subtitle" && slide.bodyIsSubtitle()) target = "body"; // the layout's body placeholder is its subtitle
   if (target === "subtitle") {
     const shape = slide.subtitleShape();
     if (shape === null || !shown.has(shape.identifier)) {

@@ -9,6 +9,8 @@ import {
   addExternalReference,
   addShape,
   componentIdOf,
+  isSubtitleStyle,
+  paragraphStyleName,
   styleNamed,
   subtitleStyle,
   removeExternalReference,
@@ -327,12 +329,20 @@ export class Slide {
   /**
    * Give the slide a subtitle under its title, in the theme's Subtitle paragraph style.
    *
-   * Layouts such as Basic White's "Title & Bullets" come with an empty
-   * subtitle text box, which this fills. Otherwise it adds one that spans the
-   * title's width and tucks under its last line, as Keynote places it. Builds
-   * can target it as ``"subtitle"``.
+   * On layouts such as "Title", whose body placeholder is the subtitle
+   * ("Presentation Subtitle"), this fills the body. Layouts such as Basic
+   * White's "Title & Bullets" come with an empty subtitle text box, which
+   * this fills. Otherwise it adds one that spans the title's width and tucks
+   * under its last line, as Keynote places it. Builds can target it as
+   * ``"subtitle"``. Returns the text box, or ``null`` when the subtitle is
+   * the body placeholder.
    */
-  addSubtitle(text: string | Iterable<ParagraphInput>): Shape {
+  addSubtitle(text: string | Iterable<ParagraphInput>): Shape | null {
+    if (this.bodyIsSubtitle()) {
+      if ((this.body ?? "").trim()) throw new Error(`slide ${this.index} already has a subtitle`);
+      this.body = text;
+      return null;
+    }
     const existing = this.subtitleShape();
     if (existing !== null) {
       if (existing.text.trim()) throw new Error(`slide ${this.index} already has a subtitle`);
@@ -359,14 +369,27 @@ export class Slide {
 
   /** The subtitle under the title (see {@link addSubtitle}), or ``null`` if it has none or it is empty. */
   get subtitle(): string | null {
+    if (this.bodyIsSubtitle()) return (this.body ?? "").trim() ? this.body : null;
     const shape = this.subtitleShape();
     return shape !== null && shape.text.trim() ? shape.text : null;
   }
 
   set subtitle(value: string | null) {
+    if (this.bodyIsSubtitle()) {
+      this.body = value ?? "";
+      return;
+    }
     const shape = this.subtitleShape();
     if (shape !== null) shape.text = value ?? "";
     else if (value) this.addSubtitle(value);
+  }
+
+  /** @internal */
+  bodyIsSubtitle(): boolean {
+    // Whether the layout's body placeholder is its subtitle, as on "Title" ("Presentation Subtitle").
+    if (this.bodyText === null) return false;
+    const storageId: number = this.pkg.deref(this.slide.bodyPlaceholder).super.owned_storage.identifier;
+    return isSubtitleStyle(paragraphStyleName(this.pkg, storageId));
   }
 
   /** @internal */
@@ -886,7 +909,7 @@ export class Presentation {
       const oldA = sub(sub(sub(old.slide, "transition"), "attributes"), "animationAttributes");
       if (has(oldA, "direction")) slide.slide.transition.attributes.animationAttributes.direction = oldA.direction;
       slide.skipped = old.skipped;
-      if (old.subtitle !== null && slide.title !== null) slide.addSubtitle(old.subtitle);
+      if (old.subtitle !== null && slide.title !== null && slide.subtitle === null) slide.addSubtitle(old.subtitle);
       for (const b of old.builds) {
         if (typeof b.target !== "string") continue;
         const present = { title: slide.titleText, body: slide.bodyText, subtitle: slide.subtitle }[b.target];
@@ -918,7 +941,8 @@ export class Presentation {
    * ``{ effect: "wipe", start: "after previous", delay: 0.1 }``. A slide's
    * existing builds are replaced, and a build is left out where the slide
    * doesn't show that text or it is empty. Builds play title, then
-   * subtitle, then body.
+   * subtitle, then body. On a layout whose body is its subtitle, such as
+   * "Title", the body gets ``subtitleBuild``.
    */
   applyStyle(options: ApplyStyleOptions = {}): void {
     const { transition, titleBuild, subtitleBuild, bodyBuild } = options;
@@ -932,6 +956,7 @@ export class Presentation {
       slide.clearBuilds();
       for (const [target, build] of [["title", titleBuild], ["subtitle", subtitleBuild], ["body", bodyBuild]] as const) {
         if (build === undefined || !(slide[target] ?? "").trim()) continue;
+        if (target === "body" && slide.bodyIsSubtitle()) continue; // the body is the subtitle, built by subtitleBuild
         slide.addBuild(target, typeof build === "string" ? { effect: build } : build);
       }
     }

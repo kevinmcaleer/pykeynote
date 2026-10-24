@@ -58,6 +58,29 @@ export function subtitleStyle(pkg: Package): string | null {
   return names.reduce((a, b) => (Number(a.split("-")[1]) <= Number(b.split("-")[1]) ? a : b));
 }
 
+/** Whether a paragraph style name is one of the theme's subtitle styles, e.g. "Subtitle Alt". */
+export function isSubtitleStyle(name: string | null): boolean {
+  return name !== null && /-paragraphstyle-Subtitle\b/.test(name);
+}
+
+/** The theme's name for the paragraph style of a storage's first paragraph, or of the style it varies. */
+export function paragraphStyleName(pkg: Package, storageId: number): string | null {
+  const entries = pkg.get(storageId).table_para_style?.entries ?? [];
+  if (!entries.length) return null;
+  const names = new Map([...namedStyles(pkg)].map(([k, v]) => [v, k]));
+  let styleId: number | undefined = entries[0].object?.identifier;
+  while (styleId) {
+    const name = names.get(styleId);
+    if (name !== undefined) return name;
+    if (!pkg.has(styleId)) return null;
+    let base: Message | undefined = pkg.get(styleId).super;
+    while (base !== undefined && !has(base, "parent") && base.super !== undefined) base = base.super;
+    if (base === undefined || !has(base, "parent")) return null;
+    styleId = base.parent.identifier;
+  }
+  return null;
+}
+
 /**
  * A new style based on ``parentId`` that can override some of its properties.
  *
@@ -497,21 +520,7 @@ export class Shape extends Drawable {
   get isSubtitle(): boolean {
     const a = this.archive;
     if (!this.isTextBox || !has(a, "owned_storage")) return false;
-    const name = subtitleStyle(this.pkg);
-    const entries = this.pkg.get(a.owned_storage.identifier).table_para_style?.entries ?? [];
-    if (name === null || !entries.length) return false;
-    const wanted = styleNamed(this.pkg, name);
-    let styleId: number | undefined = entries[0].object?.identifier;
-    while (styleId) {
-      // the style or a variation of it
-      if (styleId === wanted) return true;
-      if (!this.pkg.has(styleId)) return false;
-      let base: Message | undefined = this.pkg.get(styleId).super;
-      while (base !== undefined && !has(base, "parent") && base.super !== undefined) base = base.super;
-      if (base === undefined || !has(base, "parent")) return false;
-      styleId = base.parent.identifier;
-    }
-    return false;
+    return isSubtitleStyle(paragraphStyleName(this.pkg, a.owned_storage.identifier));
   }
 
   get textStorage(): Text | null {
