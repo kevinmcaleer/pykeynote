@@ -82,6 +82,32 @@ opened, at least one slide must already use the layout.
 Without the file system, use `Presentation.fromBytes(bytes)` and
 `deck.toBytes()`.
 
+### Builds, transitions and subtitles
+
+```ts
+const s = deck.addSlide("Title & Bullets", { title: "test", body: ["some text", "more points", "last bits"] });
+s.addSubtitle("sub title");                     // in the theme's Subtitle style, under the title
+s.setTransition("wipe", { duration: 0.75 });     // direction: "from right" and so on
+s.addBuild("title", { effect: "wipe", direction: "from left" });
+s.addBuild("subtitle", { effect: "wipe", direction: "from left", start: "after previous", delay: 0.1 });
+s.addBuild("body", { effect: "fade and move", delivery: "by bullet", duration: 0.3 });
+
+// or one look for every slide, leaving out builds a slide has no text for:
+deck.applyStyle({
+  transition: { effect: "wipe", duration: 0.75 },
+  titleBuild: { effect: "wipe", direction: "from left" },
+  subtitleBuild: { effect: "wipe", start: "after previous", delay: 0.1 },
+  bodyBuild: { effect: "fade and move", delivery: "by bullet", duration: 0.3 },
+});
+```
+
+`start` (`"on click"`, `"after previous"` or `"with previous"`) and `delay`
+apply to a build's first step; later bullets each come on a click.
+`direction` is `"from left"`, `"from right"`, `"from top"` or `"from
+bottom"`, for effects that move. Each build in `slide.builds` reports
+`start`, `delay` and `direction`, and `slide.subtitle` reads or sets the
+subtitle.
+
 ## Images, shapes, tables and charts
 
 ```ts
@@ -139,8 +165,9 @@ await talk.save("talk-dark.key");
 
 `applyTheme` rebuilds each slide on the new theme's layout of the same
 name, or the closest one that shows a title and body where the slide has
-them (see `matchLayout`). Titles and bodies with their indent levels, notes,
-transitions, skipping and builds on titles and bodies come along. Images,
+them (see `matchLayout`). Titles and bodies with their indent levels,
+subtitles, notes, transitions, skipping and builds on titles, subtitles and
+bodies come along. Images,
 shapes, text boxes, tables, charts and text formatting beyond the layout's
 own don't.
 
@@ -151,8 +178,10 @@ settings go in HTML comments, and presenter notes follow a `???` line:
 
 ```markdown
 <!-- layout: Title & Bullets -->
-<!-- transition: dissolve 1.5s -->
+<!-- transition: wipe 0.75s from left -->
+<!-- build: subtitle, wipe, 1s, after previous, delay 0.1s -->
 # Why robots?
+## A subtitle
 
 - They're fun
   - Mostly
@@ -164,7 +193,9 @@ Keep this one short.
 
 Images are written as `![description](file "x,y wxh")` and tables as pipe
 tables, so a deck survives the trip both ways. Builds are
-`<!-- build: body, dissolve, by bullet, 1s -->` comments. Pass
+`<!-- build: body, dissolve, by bullet, 1s -->` comments, which can also
+take a start, `delay 0.1s` and a direction, and a `##` line under the title
+is its subtitle. Pass
 `{ imageDir: "images", onImage: (path, data) => ... }` to `toMarkdown` to save
 the pictures, and `{ baseDir }` or `{ images: async (path) => bytes }` to
 `fromMarkdown` to find them again.

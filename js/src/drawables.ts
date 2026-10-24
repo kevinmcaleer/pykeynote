@@ -51,6 +51,13 @@ export function styleNamed(pkg: Package, name: string): number {
   return found;
 }
 
+/** The name of the theme's main subtitle paragraph style, e.g. ``"text-2-paragraphstyle-Subtitle"``. */
+export function subtitleStyle(pkg: Package): string | null {
+  const names = [...namedStyles(pkg).keys()].filter((n) => /^text-\d+-paragraphstyle-Subtitle$/.test(n));
+  if (!names.length) return null;
+  return names.reduce((a, b) => (Number(a.split("-")[1]) <= Number(b.split("-")[1]) ? a : b));
+}
+
 /**
  * A new style based on ``parentId`` that can override some of its properties.
  *
@@ -486,6 +493,27 @@ export class Shape extends Drawable {
     return null;
   }
 
+  /** Whether this is a text box in the theme's subtitle style, as ``Slide.addSubtitle`` makes. */
+  get isSubtitle(): boolean {
+    const a = this.archive;
+    if (!this.isTextBox || !has(a, "owned_storage")) return false;
+    const name = subtitleStyle(this.pkg);
+    const entries = this.pkg.get(a.owned_storage.identifier).table_para_style?.entries ?? [];
+    if (name === null || !entries.length) return false;
+    const wanted = styleNamed(this.pkg, name);
+    let styleId: number | undefined = entries[0].object?.identifier;
+    while (styleId) {
+      // the style or a variation of it
+      if (styleId === wanted) return true;
+      if (!this.pkg.has(styleId)) return false;
+      let base: Message | undefined = this.pkg.get(styleId).super;
+      while (base !== undefined && !has(base, "parent") && base.super !== undefined) base = base.super;
+      if (base === undefined || !has(base, "parent")) return false;
+      styleId = base.parent.identifier;
+    }
+    return false;
+  }
+
   get textStorage(): Text | null {
     const a = this.archive;
     return has(a, "owned_storage") ? new Text(this.pkg, a.owned_storage.identifier) : null;
@@ -560,6 +588,8 @@ export interface ShapeOptions {
   /** One of the theme's six shape styles, 0 to 5. */
   style?: number;
   fill?: Color;
+  /** A paragraph style for the text by its name in the theme, e.g. ``"text-2-paragraphstyle-Subtitle"``. */
+  paragraphStyle?: string;
 }
 
 export function addShape(slide: Slide, kind: string, x: number, y: number, width: number, height: number, options: ShapeOptions = {}): Shape {
@@ -574,7 +604,10 @@ export function addShape(slide: Slide, kind: string, x: number, y: number, width
   if (isTextBox && options.fill !== undefined) throw new Error("text boxes have no fill");
 
   const styleId = styleNamed(p, isTextBox ? "textbox-0-shapestyle" : `shape-${style}-shapestyle`);
-  const paraStyle: number = p.get(styleId).shape_properties.paragraph_style.identifier;
+  const paraStyle: number =
+    options.paragraphStyle !== undefined
+      ? styleNamed(p, options.paragraphStyle)
+      : p.get(styleId).shape_properties.paragraph_style.identifier;
   const listStyle = styleNamed(p, "text-0-liststyle-None");
   const sheetId = stylesheetId(p);
 

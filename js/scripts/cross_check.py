@@ -34,6 +34,13 @@ def scenario(picture: Path) -> Presentation:
     photo = deck.add_slide("Blank")
     photo.add_image(picture.read_bytes(), position=(200, 100), size=(640, None), description="A red square", name="red.png")
 
+    style = deck.add_slide("Title & Bullets", title="Style", body=["one", "two", "three"])
+    style.add_subtitle("sub title")
+    style.set_transition("wipe", 0.75, direction="from right")
+    style.add_build("title", "wipe", direction="from left")
+    style.add_build("subtitle", "wipe", direction="from top", start="after previous", delay=0.1)
+    style.add_build("body", "fade and move", delivery="by bullet", duration=0.3)
+
     skipped = deck.add_slide("Title Only", title="Skipped")
     skipped.skipped = True
     return deck
@@ -53,6 +60,9 @@ def view(deck: Presentation) -> list:
                 "delivery": b.delivery,
                 "duration": b.duration,
                 "steps": b.steps,
+                "start": b.start,
+                "delay": b.delay,
+                "direction": b.direction,
             }
             for b in slide.builds
         ]

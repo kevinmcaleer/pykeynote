@@ -73,6 +73,48 @@ deck = from_markdown(open("talk.md").read())
 deck.save("from-markdown.key")
 ```
 
+### Builds, transitions and subtitles
+
+```python
+deck = Presentation.new()
+s = deck.add_slide("Title & Bullets", title="test", body=["some text", "more points", "last bits"])
+s.add_subtitle("sub title")               # in the theme's Subtitle style, under the title
+s.set_transition("wipe", 0.75)            # direction="from right" and so on
+s.add_build("title", "wipe", direction="from left")
+s.add_build("subtitle", "wipe", direction="from left", start="after previous", delay=0.1)
+s.add_build("body", "fade and move", delivery="by bullet", duration=0.3)
+deck.save("style-check.key")
+```
+
+Build effects include `"dissolve"`, `"move in"`, `"wipe"` and `"fade and
+move"` (also `"fade-and-move"`), or Keynote's own ids such as
+`"apple:wipe"`. `start` is `"on click"` (the default), `"after previous"`
+or `"with previous"`, and `delay` is in seconds; both apply to a build's
+first step, and with `delivery="by bullet"` each later bullet comes on a
+click. `direction` is `"from left"`, `"from right"`, `"from top"` or
+`"from bottom"` for effects that move (Wipe, Move In, Fade and Move), and
+the same names work for transitions; asking for a direction on an effect
+without one, such as Dissolve, raises `ValueError`. Each `Build` in
+`slide.builds` has `start`, `delay` and `direction`, and
+`slide.transition.direction` gives the transition's.
+
+Basic White's "Title & Bullets" and several other layouts come with an
+empty subtitle text box, which `add_subtitle` fills; on other layouts it
+adds one under the title. `slide.subtitle` reads or sets it.
+
+To give a whole deck one look, `apply_style` sets the transition and the
+title, subtitle and body builds on every slide, leaving out a build where a
+slide doesn't show that text:
+
+```python
+deck.apply_style(
+    transition={"effect": "wipe", "duration": 0.75},
+    title_build={"effect": "wipe", "direction": "from left"},
+    subtitle_build={"effect": "wipe", "start": "after previous", "delay": 0.1},
+    body_build={"effect": "fade and move", "delivery": "by bullet", "duration": 0.3},
+)
+```
+
 ## Images
 
 ```python
@@ -178,8 +220,8 @@ deck.save("talk-dark.key")
 `apply_theme` rebuilds each slide on the new theme's layout of the same
 name, or the closest one that shows a title and body where the slide has
 them (`deck.match_layout(name, title=True, body=True)` shows the choice).
-Titles and bodies with their indent levels, notes, transitions, skipping
-and builds on titles and bodies come along. Images, shapes, text boxes and
+Titles and bodies with their indent levels, subtitles, notes, transitions,
+skipping and builds on titles, subtitles and bodies come along. Images, shapes, text boxes and
 text formatting beyond the layout's own don't. The slide size stays 16:9 or
 4:3 unless you pass `aspect=`.
 
@@ -192,9 +234,12 @@ settings go in HTML comments, and presenter notes follow a `???` line:
 
 ```markdown
 <!-- layout: Title & Bullets -->
-<!-- transition: dissolve 1.5s -->
-<!-- build: body, dissolve, by bullet, 1s -->
+<!-- transition: wipe 0.75s from left -->
+<!-- build: title, wipe, 1s, from left -->
+<!-- build: subtitle, wipe, 1s, after previous, delay 0.1s -->
+<!-- build: body, fade and move, by bullet, 0.3s -->
 # Why robots?
+## A subtitle
 
 - They're fun
   - Mostly
@@ -207,6 +252,12 @@ settings go in HTML comments, and presenter notes follow a `???` line:
 ???
 Keep this one short.
 ```
+
+A `##` heading straight after the `#` title is the slide's subtitle. A
+build comment takes a target (`title`, `subtitle` or `body`) and an effect,
+then in any order a delivery, a duration, `in` or `out`, a start (`after
+previous`, `with previous`), a delay (`delay 0.1s`) and a direction (`from
+left`). A transition comment can end with a direction too.
 
 Tables are pipe tables both ways; the rows above the `| --- |` line are
 header rows. A slide with a title and a table but no bullets gets the
@@ -238,11 +289,13 @@ pykeynote show talk.key 1                  # one slide: text, notes, transition,
 pykeynote export talk.key -o talk.md       # .key to Markdown
 pykeynote edit talk.key 1 --title "Why robots?" --body "They're fun" --body "  Mostly" --notes "Short"
 pykeynote edit talk.key 1 --transition dissolve --duration 1.5 --skip no
+pykeynote edit talk.key 1 --transition wipe --duration 0.75 --direction from-left --subtitle "sub title"
 pykeynote add talk.key --layout "Title & Bullets" --title "One more" --at 2
 pykeynote duplicate talk.key 1
 pykeynote move talk.key 3 0
 pykeynote delete talk.key -1
 pykeynote build talk.key 1 --target body --effect dissolve
+pykeynote build talk.key 1 --target subtitle --effect wipe --start after-previous --delay 0.1 --direction from-left
 pykeynote theme talk.key "Basic Black" --layout Quote=Statement
 pykeynote themes
 pykeynote image talk.key 2 robot.png --alt "A robot arm"   # fills the media placeholder if there is one
@@ -272,9 +325,10 @@ It has no extra dependencies, and needs a pykeynote release newer than 0.2.0.
 Its tools are `list_themes`, `deck_info`,
 `read_slide`, `export_markdown`, `create_deck`, `edit_slide`, `add_slide`,
 `delete_slide`, `move_slide`, `duplicate_slide`, `apply_theme`, `add_build`,
-`clear_builds`, `add_image`, `replace_image`, `remove_image`, `add_shape`,
+`apply_style`, `clear_builds`, `add_image`, `replace_image`, `remove_image`, `add_shape`,
 `add_text_box`, `add_table`, `add_chart` and `delete_drawable`. Editing tools save the deck when they finish, or write a copy
-when given `output`.
+when given `output`. `add_build` takes `start`, `delay` and `direction`, and
+`edit_slide` takes `subtitle` and `transition_direction`.
 
 For Claude Code:
 

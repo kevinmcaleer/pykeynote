@@ -3,9 +3,12 @@
 Each slide becomes a block, and blocks are separated by ``---``::
 
     <!-- layout: Title & Bullets -->
-    <!-- transition: dissolve 1.5s -->
-    <!-- build: body, dissolve, by bullet, 1s -->
+    <!-- transition: wipe 0.75s from left -->
+    <!-- build: title, wipe, all at once, 1s, from left -->
+    <!-- build: subtitle, wipe, all at once, 1s, after previous, delay 0.1s -->
+    <!-- build: body, fade and move, by bullet, 0.3s -->
     # Slide title
+    ## A subtitle
 
     - A bullet
       - An indented bullet
@@ -24,6 +27,13 @@ Each slide becomes a block, and blocks are separated by ``---``::
 Tables are pipe tables; a ``| --- |`` line ends the header rows. Slide
 settings go in HTML comments, so the Markdown still renders cleanly
 elsewhere. Notes follow a line holding only ``???``, as in remark.js.
+A ``##`` heading straight after the ``#`` title is the slide's subtitle.
+
+A build comment holds a target (title, subtitle or body), an effect, then
+in any order: a delivery ("all at once" or "by bullet"), a duration
+("1s"), "in" or "out", a start ("on click", "after previous" or "with
+previous"), a delay ("delay 0.1s") and a direction ("from left", "from
+right", "from top" or "from bottom").
 
 An image fills the layout's next media placeholder, or, if its title gives
 a frame (``"x,y"`` or ``"x,y widthxheight"``, in points), goes exactly there.
@@ -36,6 +46,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
+from .builds import STARTS, direction_value, direction_name
 from .text import Paragraph
 
 if TYPE_CHECKING:
@@ -93,17 +104,29 @@ def slide_to_markdown(slide: "Slide", image_dir: Optional[str] = None, _names: O
     lines: List[str] = [f"<!-- layout: {slide.layout} -->"]
     t = slide.transition
     if t.effect:
-        lines.append(f"<!-- transition: {t.effect} {_fmt_seconds(t.duration)} -->")
+        direction = f" {t.direction}" if t.direction else ""
+        lines.append(f"<!-- transition: {t.effect} {_fmt_seconds(t.duration)}{direction} -->")
     if slide.skipped:
         lines.append("<!-- skipped -->")
     for b in slide.builds:
         if isinstance(b.target, str):
-            delivery = "by bullet" if b.delivery == "By Paragraph" else b.delivery.lower()
-            kind = "" if b.kind == "in" else f", {b.kind}"
-            lines.append(f"<!-- build: {b.target}, {b.effect}, {delivery}, {_fmt_seconds(b.duration)}{kind} -->")
+            parts = [b.target, b.effect, "by bullet" if b.delivery == "By Paragraph" else b.delivery.lower()]
+            parts.append(_fmt_seconds(b.duration))
+            if b.kind != "in":
+                parts.append(b.kind)
+            if b.start != "on click":
+                parts.append(b.start)
+            if b.delay:
+                parts.append(f"delay {_fmt_seconds(b.delay)}")
+            if b.direction:
+                parts.append(b.direction)
+            lines.append(f"<!-- build: {', '.join(parts)} -->")
 
     if slide.title is not None and slide.title.strip():
         lines.append("# " + " ".join(slide.title.split()))
+        subtitle = slide.subtitle
+        if subtitle is not None:
+            lines.append("## " + " ".join(subtitle.split()))
 
     body: List[str] = []
     for para in slide.paragraphs:
@@ -172,7 +195,7 @@ def to_markdown(presentation: "Presentation", image_dir: Optional[str] = None) -
 _COMMENT = re.compile(r"^<!--\s*(.*?)\s*-->$")
 _HEADING = re.compile(r"^#{1,2}\s+(.*)$")
 _BULLET = re.compile(r"^(\s*)(?:[-*+]|\d+[.)])\s+(.*)$")
-_TRANSITION = re.compile(r"^(.*?)(?:\s+([\d.]+)\s*s)?$")
+_TRANSITION = re.compile(r"^(.*?)(?:\s+([\d.]+)\s*s)?(?:\s+((?:from|left|right|top|bottom)\b.*))?$")
 _IMAGE = re.compile(r'^!\[((?:\\.|[^\]])*)\]\(\s*(<[^>]*>|[^\s)]+)(?:\s+"([^"]*)")?\s*\)$')
 _FRAME = re.compile(r"^\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)(?:\s+([\d.]+)\s*[x×]\s*([\d.]+))?\s*$")
 
@@ -193,10 +216,12 @@ class SlideSpec:
 
     layout: Optional[str] = None
     title: Optional[str] = None
+    subtitle: Optional[str] = None
     paragraphs: List[Paragraph] = field(default_factory=list)
     notes: str = ""
     transition: Optional[str] = None
     transition_duration: Optional[float] = None
+    transition_direction: Optional[str] = None
     skipped: bool = False
     builds: List[dict] = field(default_factory=list)
     tables: List["TableSpec"] = field(default_factory=list)
@@ -271,18 +296,33 @@ def _clean(text: str) -> str:
     return text[1:] if text.startswith("\\") else text
 
 
+def _is_direction(text: str) -> bool:
+    try:
+        direction_value(text)
+    except ValueError:
+        return False
+    return True
+
+
 def _parse_build(value: str) -> dict:
-    """Read ``target, effect[, delivery][, 1.5s][, in|out]`` from a build comment."""
+    """Read ``target, effect[, delivery][, 1.5s][, in|out][, start][, delay 0.1s][, direction]`` from a build comment."""
     parts = [p.strip() for p in value.split(",") if p.strip()]
     if len(parts) < 2:
         raise ValueError(f"a build needs at least a target and an effect: {value!r}")
-    build = {"target": parts[0].lower(), "effect": parts[1]}
+    build: Dict[str, Any] = {"target": parts[0].lower(), "effect": parts[1]}
     for part in parts[2:]:
-        low = part.lower()
+        low = " ".join(part.lower().replace("-", " ").split())
+        delay = re.fullmatch(r"delay\s*([\d.]+)\s*s?", low)
         if re.fullmatch(r"[\d.]+\s*s", low):
             build["duration"] = float(low.rstrip("s").strip())
+        elif delay:
+            build["delay"] = float(delay.group(1))
         elif low in ("in", "out"):
             build["kind"] = low
+        elif low in STARTS:
+            build["start"] = low
+        elif _is_direction(low):
+            build["direction"] = direction_name(direction_value(low))
         else:
             build["delivery"] = low
     return build
@@ -350,6 +390,7 @@ def parse_markdown(text: str) -> List[SlideSpec]:
                     m = _TRANSITION.match(value)
                     spec.transition = m.group(1).strip()
                     spec.transition_duration = float(m.group(2)) if m.group(2) else None
+                    spec.transition_direction = m.group(3).strip() if m.group(3) else None
                 elif key == "skipped":
                     spec.skipped = value.lower() not in ("false", "no", "0")
                 elif key == "build":
@@ -363,6 +404,16 @@ def parse_markdown(text: str) -> List[SlideSpec]:
             heading = _HEADING.match(stripped)
             if heading and spec.title is None and not spec.paragraphs and not pending:
                 spec.title = _clean(heading.group(1))
+                continue
+            if (
+                heading
+                and stripped.startswith("## ")
+                and spec.title is not None
+                and spec.subtitle is None
+                and not spec.paragraphs
+                and not pending
+            ):
+                spec.subtitle = _clean(heading.group(1))
                 continue
             if _TABLE_ROW.match(line) and not pending:
                 table_lines.append(line)
@@ -414,10 +465,12 @@ def from_markdown(
             if slide.body is None:
                 raise ValueError(f"the {layout!r} layout doesn't show a body, for {spec.paragraphs[0].text!r}")
             slide.body = spec.paragraphs
+        if spec.subtitle is not None:
+            slide.add_subtitle(spec.subtitle)
         if spec.notes:
             slide.notes = spec.notes
         if spec.transition:
-            slide.set_transition(spec.transition, spec.transition_duration)
+            slide.set_transition(spec.transition, spec.transition_duration, direction=spec.transition_direction)
         if spec.skipped:
             slide.skipped = True
         _place_tables(slide, spec)

@@ -4,9 +4,12 @@
  * Each slide becomes a block, and blocks are separated by ``---``:
  *
  *     <!-- layout: Title & Bullets -->
- *     <!-- transition: dissolve 1.5s -->
- *     <!-- build: body, dissolve, by bullet, 1s -->
+ *     <!-- transition: wipe 0.75s from left -->
+ *     <!-- build: title, wipe, all at once, 1s, from left -->
+ *     <!-- build: subtitle, wipe, all at once, 1s, after previous, delay 0.1s, from left -->
+ *     <!-- build: body, fade and move, by bullet, 0.3s -->
  *     # Slide title
+ *     ## A subtitle
  *
  *     - A bullet
  *       - An indented bullet
@@ -25,12 +28,19 @@
  * Tables are pipe tables; a ``| --- |`` line ends the header rows. Slide
  * settings go in HTML comments, so the Markdown still renders cleanly
  * elsewhere. Notes follow a line holding only ``???``, as in remark.js.
+ * A ``##`` heading straight after the ``#`` title is the slide's subtitle.
+ *
+ * A build comment holds a target (title, subtitle or body), an effect, then
+ * in any order: a delivery ("all at once" or "by bullet"), a duration
+ * ("1s"), "in" or "out", a start ("on click", "after previous" or "with
+ * previous"), a delay ("delay 0.1s") and a direction ("from left", "from
+ * right", "from top" or "from bottom").
  *
  * An image fills the layout's next media placeholder, or, if its title gives
  * a frame (``"x,y"`` or ``"x,y widthxheight"``, in points), goes exactly there.
  */
 
-import type { BuildOptions } from "./builds.js";
+import { STARTS, directionName, directionValue, type BuildOptions, type Start } from "./builds.js";
 import { Presentation, type Aspect, type Slide } from "./document.js";
 import type { CellValue } from "./tables.js";
 import type { Paragraph } from "./text.js";
@@ -100,17 +110,24 @@ function imageLines(slide: Slide, options: ToMarkdownOptions, names: Map<string,
 export function slideToMarkdown(slide: Slide, options: ToMarkdownOptions = {}, names?: Map<string, Set<string>>): string {
   const lines: string[] = [`<!-- layout: ${slide.layout} -->`];
   const t = slide.transition;
-  if (t.effect) lines.push(`<!-- transition: ${t.effect} ${fmtSeconds(t.duration)} -->`);
+  if (t.effect) lines.push(`<!-- transition: ${t.effect} ${fmtSeconds(t.duration)}${t.direction ? " " + t.direction : ""} -->`);
   if (slide.skipped) lines.push("<!-- skipped -->");
   for (const b of slide.builds) {
     if (typeof b.target !== "string") continue;
-    const delivery = b.delivery === "By Paragraph" ? "by bullet" : b.delivery.toLowerCase();
-    const kind = b.kind === "in" ? "" : `, ${b.kind}`;
-    lines.push(`<!-- build: ${b.target}, ${b.effect}, ${delivery}, ${fmtSeconds(b.duration)}${kind} -->`);
+    const parts = [b.target, b.effect, b.delivery === "By Paragraph" ? "by bullet" : b.delivery.toLowerCase(), fmtSeconds(b.duration)];
+    if (b.kind !== "in") parts.push(b.kind);
+    if (b.start !== "on click") parts.push(b.start);
+    if (b.delay) parts.push(`delay ${fmtSeconds(b.delay)}`);
+    if (b.direction) parts.push(b.direction);
+    lines.push(`<!-- build: ${parts.join(", ")} -->`);
   }
 
   const title = slide.title;
-  if (title !== null && title.trim()) lines.push("# " + title.trim().split(/\s+/).join(" "));
+  if (title !== null && title.trim()) {
+    lines.push("# " + title.trim().split(/\s+/).join(" "));
+    const subtitle = slide.subtitle;
+    if (subtitle !== null) lines.push("## " + subtitle.trim().split(/\s+/).join(" "));
+  }
 
   const body: string[] = [];
   for (const para of slide.paragraphs) {
@@ -166,7 +183,7 @@ export function toMarkdown(presentation: Presentation, options: ToMarkdownOption
 const COMMENT = /^<!--\s*(.*?)\s*-->$/;
 const HEADING = /^#{1,2}\s+(.*)$/;
 const BULLET = /^(\s*)(?:[-*+]|\d+[.)])\s+(.*)$/;
-const TRANSITION = /^(.*?)(?:\s+([\d.]+)\s*s)?$/;
+const TRANSITION = /^(.*?)(?:\s+([\d.]+)\s*s)?(?:\s+((?:from|left|right|top|bottom)\b.*))?$/;
 const IMAGE = /^!\[((?:\\.|[^\]])*)\]\(\s*(<[^>]*>|[^\s)]+)(?:\s+"([^"]*)")?\s*\)$/;
 const FRAME = /^\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)(?:\s+([\d.]+)\s*[x×]\s*([\d.]+))?\s*$/;
 const TABLE_ROW = /^\s*\|.*\|\s*$/;
@@ -189,10 +206,12 @@ export interface TableSpec {
 export interface SlideSpec {
   layout: string | null;
   title: string | null;
+  subtitle: string | null;
   paragraphs: Required<Paragraph>[];
   notes: string;
   transition: string | null;
   transitionDuration: number | null;
+  transitionDirection: string | null;
   skipped: boolean;
   builds: (BuildOptions & { target: string })[];
   tables: TableSpec[];
@@ -252,18 +271,31 @@ function clean(text: string): string {
   return text.startsWith("\\") ? text.slice(1) : text;
 }
 
-/** Read ``target, effect[, delivery][, 1.5s][, in|out]`` from a build comment. */
+/** Read ``target, effect[, delivery][, 1.5s][, in|out][, start][, delay 0.1s][, direction]`` from a build comment. */
 function parseBuild(value: string): BuildOptions & { target: string } {
   const parts = value.split(",").map((p) => p.trim()).filter(Boolean);
   if (parts.length < 2) throw new Error(`a build needs at least a target and an effect: ${JSON.stringify(value)}`);
   const build: BuildOptions & { target: string } = { target: parts[0].toLowerCase(), effect: parts[1] };
   for (const part of parts.slice(2)) {
-    const low = part.toLowerCase();
+    const low = part.toLowerCase().replaceAll("-", " ").split(/\s+/).join(" ");
+    const delay = /^delay\s*([\d.]+)\s*s?$/.exec(low);
     if (/^[\d.]+\s*s$/.test(low)) build.duration = parseFloat(low);
+    else if (delay) build.delay = parseFloat(delay[1]);
     else if (low === "in" || low === "out") build.kind = low;
+    else if ((STARTS as readonly string[]).includes(low)) build.start = low as Start;
+    else if (isDirection(low)) build.direction = directionName(directionValue(low)) ?? undefined;
     else build.delivery = low;
   }
   return build;
+}
+
+function isDirection(text: string): boolean {
+  try {
+    directionValue(text);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function parseImage(match: RegExpExecArray): ImageSpec {
@@ -307,10 +339,12 @@ export function parseMarkdown(text: string): SlideSpec[] {
     const spec: SlideSpec = {
       layout: null,
       title: null,
+      subtitle: null,
       paragraphs: [],
       notes: "",
       transition: null,
       transitionDuration: null,
+      transitionDirection: null,
       skipped: false,
       builds: [],
       tables: [],
@@ -355,6 +389,7 @@ export function parseMarkdown(text: string): SlideSpec[] {
           const m = TRANSITION.exec(value)!;
           spec.transition = m[1].trim();
           spec.transitionDuration = m[2] ? parseFloat(m[2]) : null;
+          spec.transitionDirection = m[3] ? m[3].trim() : null;
         } else if (key === "skipped") {
           spec.skipped = !["false", "no", "0"].includes(value.toLowerCase());
         } else if (key === "build") {
@@ -371,6 +406,10 @@ export function parseMarkdown(text: string): SlideSpec[] {
       const heading = HEADING.exec(stripped);
       if (heading && spec.title === null && !spec.paragraphs.length && !pending.length) {
         spec.title = clean(heading[1]);
+        continue;
+      }
+      if (heading && stripped.startsWith("## ") && spec.title !== null && spec.subtitle === null && !spec.paragraphs.length && !pending.length) {
+        spec.subtitle = clean(heading[1]);
         continue;
       }
       if (TABLE_ROW.test(line) && !pending.length) {
@@ -451,8 +490,14 @@ export async function fromMarkdown(text: string, options: FromMarkdownOptions = 
       }
       slide.body = spec.paragraphs;
     }
+    if (spec.subtitle !== null) slide.addSubtitle(spec.subtitle);
     if (spec.notes) slide.notes = spec.notes;
-    if (spec.transition) slide.setTransition(spec.transition, { duration: spec.transitionDuration ?? undefined });
+    if (spec.transition) {
+      slide.setTransition(spec.transition, {
+        duration: spec.transitionDuration ?? undefined,
+        direction: spec.transitionDirection ?? undefined,
+      });
+    }
     if (spec.skipped) slide.skipped = true;
     placeTables(slide, spec);
     for (const image of spec.images) {
@@ -465,7 +510,7 @@ export async function fromMarkdown(text: string, options: FromMarkdownOptions = 
       }
     }
     for (const sample of slide.images.filter((i) => i.isSample)) slide.removeImage(sample);
-    for (const { target, ...build } of spec.builds) slide.addBuild(target as "title" | "body", build);
+    for (const { target, ...build } of spec.builds) slide.addBuild(target as "title" | "subtitle" | "body", build);
   }
   return deck;
 }

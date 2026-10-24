@@ -102,9 +102,11 @@ def test_to_dict(layouts):
         "index": 3,
         "layout": "Title & Bullets",
         "title": "Title & Bullets",
+        "subtitle": None,
         "body": "First bullet\nSecond bullet\nThird bullet",
         "notes": "Notes for Title & Bullets",
         "skipped": False,
-        "transition": {"effect": None, "duration": 1.0, "delay": 0.5, "automatic": False},
+        "transition": {"effect": None, "duration": 1.0, "delay": 0.5, "automatic": False, "direction": None},
+        "builds": [],
         "images": [],
     }

@@ -41,6 +41,13 @@ async function scenario(picture) {
   const photo = deck.addSlide("Blank");
   photo.addImage(picture, { position: [200, 100], size: [640, null], description: "A red square", name: "red.png" });
 
+  const style = deck.addSlide("Title & Bullets", { title: "Style", body: ["one", "two", "three"] });
+  style.addSubtitle("sub title");
+  style.setTransition("wipe", { duration: 0.75, direction: "from right" });
+  style.addBuild("title", { effect: "wipe", direction: "from left" });
+  style.addBuild("subtitle", { effect: "wipe", direction: "from top", start: "after previous", delay: 0.1 });
+  style.addBuild("body", { effect: "fade and move", delivery: "by bullet", duration: 0.3 });
+
   const skipped = deck.addSlide("Title Only", { title: "Skipped" });
   skipped.skipped = true;
   return deck;
@@ -53,7 +60,7 @@ function view(deck) {
     const target = (t) => (typeof t === "number" ? `drawable ${drawables.findIndex((d) => d.identifier === t)}` : t);
     return {
       ...slide.toJSON(),
-      builds: slide.builds.map((b) => ({ target: target(b.target), kind: b.kind, effect: b.effect, delivery: b.delivery, duration: b.duration, steps: b.steps })),
+      builds: slide.builds.map((b) => ({ target: target(b.target), kind: b.kind, effect: b.effect, delivery: b.delivery, duration: b.duration, steps: b.steps, start: b.start, delay: b.delay, direction: b.direction })),
     };
   });
 }

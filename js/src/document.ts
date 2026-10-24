@@ -9,6 +9,8 @@ import {
   addExternalReference,
   addShape,
   componentIdOf,
+  styleNamed,
+  subtitleStyle,
   removeExternalReference,
   removeFromSlide,
   type Color,
@@ -33,12 +35,35 @@ export interface Transition {
   automatic: boolean;
   /** Keynote's own name for the effect, e.g. ``"apple:dissolve"``. */
   effectId: string;
+  /** e.g. ``"from left"``; ``null`` if it has none or isn't known. */
+  direction: string | null;
 }
 
 export interface TransitionOptions {
   duration?: number;
   delay?: number;
   automatic?: boolean;
+  /** ``"from left"``, ``"from right"``, ``"from top"`` or ``"from bottom"``, for effects that move. Wipe goes from left by default. */
+  direction?: builds.Direction | string;
+}
+
+/** Transitions that take a direction, with the one Keynote uses when it leaves the field out. */
+const TRANSITION_DIRECTIONAL: Record<string, string | null> = {
+  "apple:wipe": "from left",
+  "apple:push": null,
+};
+
+/** A transition or build for {@link Presentation.applyStyle}: an effect name, or its options. */
+export type StyleTransition = string | ({ effect: string } & TransitionOptions);
+export type StyleBuild = string | ({ effect: string } & builds.BuildOptions);
+
+export interface ApplyStyleOptions {
+  transition?: StyleTransition;
+  titleBuild?: StyleBuild;
+  subtitleBuild?: StyleBuild;
+  bodyBuild?: StyleBuild;
+  /** Slide indexes to style; every slide by default. */
+  slides?: number[];
 }
 
 function effectName(effectId: string): string | null {
@@ -192,21 +217,23 @@ export class Slide {
       delay: a.delay,
       automatic: a.is_automatic,
       effectId: a.effect,
+      direction: builds.directionName(a.direction, TRANSITION_DIRECTIONAL[a.effect] ?? null),
     };
   }
 
   /**
-   * Set the transition into the next slide, e.g. ``setTransition("dissolve", { duration: 1.5 })``.
+   * Set the transition into the next slide, e.g. ``setTransition("wipe", { duration: 0.75, direction: "from right" })``.
    *
-   * ``effect`` is a name such as ``"dissolve"``, ``"push"`` or ``"magic
-   * move"``, Keynote's own id such as ``"apple:dissolve"``, or ``null`` to
-   * remove the transition. Dissolve, push and magic move are checked against
-   * real Keynote files; other names follow the same pattern.
+   * ``effect`` is a name such as ``"dissolve"``, ``"wipe"``, ``"push"`` or
+   * ``"magic move"``, Keynote's own id such as ``"apple:dissolve"``, or
+   * ``null`` to remove the transition. Dissolve, wipe, push and magic move
+   * are checked against real Keynote files; other names follow the same pattern.
    */
   setTransition(effect: string | null, options: TransitionOptions = {}): void {
     const attrs = ensure(ensure(this.slide, "transition"), "attributes");
     const a = ensure(attrs, "animationAttributes");
     const effectId = effectIdOf(effect);
+    builds.setDirection(a, effectId, options.direction, TRANSITION_DIRECTIONAL, "transition");
     a.effect = effectId;
     for (const f of ["custom_magic_move_fade_unmatched_objects", "custom_timing_curve", "custom_text_delivery_type"]) {
       clear(attrs, f);
@@ -235,14 +262,17 @@ export class Slide {
   }
 
   /**
-   * Animate ``target`` onto the slide: ``"title"``, ``"body"``, a shape,
-   * image, table or chart, or its identifier.
+   * Animate ``target`` onto the slide: ``"title"``, ``"subtitle"``,
+   * ``"body"``, a shape, image, table or chart, or its identifier.
    *
-   * ``effect`` is a build effect such as ``"dissolve"`` (the default) or
-   * ``"move in"``, or options with ``delivery`` (``"all at once"`` or ``"by
-   * bullet"``, the default for a body with several paragraphs), ``duration``
-   * and ``kind`` (``"in"`` or ``"out"``). Each build plays after the ones
-   * added before it, one click per step.
+   * ``effect`` is a build effect such as ``"dissolve"`` (the default),
+   * ``"move in"``, ``"wipe"`` or ``"fade and move"``, or options with
+   * ``effect``, ``delivery`` (``"all at once"`` or ``"by bullet"``, the
+   * default for a body with several paragraphs), ``duration``, ``kind``
+   * (``"in"`` or ``"out"``), ``start`` (``"on click"``, ``"after previous"``
+   * or ``"with previous"``), ``delay`` and ``direction``. Each build plays
+   * after the ones added before it; ``start`` and ``delay`` apply to its
+   * first step, and later bullets each come on a click.
    */
   addBuild(target: builds.BuildTarget = "body", effect: string | builds.BuildOptions = {}): builds.Build {
     return builds.addBuild(this, target, typeof effect === "string" ? { effect } : effect);
@@ -292,6 +322,56 @@ export class Slide {
   addShape(kind = "rectangle", options: AddShapeOptions = {}): Shape {
     const [x, y, width, height] = this.defaultFrame(options, 400, 300);
     return addShape(this, kind, x, y, width, height, { text: options.text, style: options.style, fill: options.fill });
+  }
+
+  /**
+   * Give the slide a subtitle under its title, in the theme's Subtitle paragraph style.
+   *
+   * Layouts such as Basic White's "Title & Bullets" come with an empty
+   * subtitle text box, which this fills. Otherwise it adds one that spans the
+   * title's width and tucks under its last line, as Keynote places it. Builds
+   * can target it as ``"subtitle"``.
+   */
+  addSubtitle(text: string | Iterable<ParagraphInput>): Shape {
+    const existing = this.subtitleShape();
+    if (existing !== null) {
+      if (existing.text.trim()) throw new Error(`slide ${this.index} already has a subtitle`);
+      existing.text = text;
+      return existing;
+    }
+    const s = this.slide;
+    const shown = new Set((s.drawables_z_order as Message[]).map((r) => r.identifier));
+    if (!has(s, "titlePlaceholder") || !shown.has(s.titlePlaceholder.identifier)) {
+      throw new Error(`the "${this.layout}" layout doesn't show a title for a subtitle to go under`);
+    }
+    const style = subtitleStyle(this.pkg);
+    if (style === null) throw new Error("this theme has no Subtitle paragraph style");
+    const size: number = this.pkg.get(styleNamed(this.pkg, style)).char_properties.font_size;
+    let g: Message = this.pkg.get(s.titlePlaceholder.identifier);
+    while (!has(g, "geometry")) g = g.super;
+    g = g.geometry;
+    // As in Basic White's "Title & Bullets": the subtitle's top is a fifth of
+    // its font size above the title's bottom, and one line is 1.34 font sizes high.
+    const y = g.position.y + g.size.height - 0.2 * size;
+    const height = Math.round(size * 1.3383 * 1e4) / 1e4;
+    return addShape(this, "text box", g.position.x, y, g.size.width, height, { text, paragraphStyle: style });
+  }
+
+  /** The subtitle under the title (see {@link addSubtitle}), or ``null`` if it has none or it is empty. */
+  get subtitle(): string | null {
+    const shape = this.subtitleShape();
+    return shape !== null && shape.text.trim() ? shape.text : null;
+  }
+
+  set subtitle(value: string | null) {
+    const shape = this.subtitleShape();
+    if (shape !== null) shape.text = value ?? "";
+    else if (value) this.addSubtitle(value);
+  }
+
+  /** @internal */
+  subtitleShape(): Shape | null {
+    return this.shapes.find((d) => d.isSubtitle) ?? null;
   }
 
   /** Add a text box in the theme's text box style. */
@@ -392,10 +472,22 @@ export class Slide {
       index: this.index,
       layout: this.layout,
       title: this.title,
+      subtitle: this.subtitle,
       body: this.body,
       notes: this.notes,
       skipped: this.skipped,
-      transition: { effect: t.effect, duration: t.duration, delay: t.delay, automatic: t.automatic },
+      transition: { effect: t.effect, duration: t.duration, delay: t.delay, automatic: t.automatic, direction: t.direction },
+      builds: this.builds.map((b) => ({
+        target: b.target,
+        kind: b.kind,
+        effect: b.effect,
+        delivery: b.delivery,
+        duration: b.duration,
+        steps: b.steps,
+        start: b.start,
+        delay: b.delay,
+        direction: b.direction,
+      })),
       drawables: this.drawables.map((d) => d.toJSON()),
       images: this.images.map((i) => ({
         position: i.position,
@@ -765,8 +857,8 @@ export class Presentation {
    *
    * Each slide is rebuilt on the new theme's layout with the same name, or
    * the closest match (see {@link matchLayout}), and keeps its title and
-   * body text with indent levels, presenter notes, transition, skipped
-   * flag, and builds on its title and body. Images, shapes, text boxes and
+   * body text with indent levels, subtitle, presenter notes, transition,
+   * skipped flag, and builds on its title, subtitle and body. Images, shapes, text boxes and
    * text formatting that differs from the layout's own are not carried over.
    */
   async applyTheme(theme: string, options: ApplyThemeOptions = {}): Promise<void> {
@@ -791,11 +883,24 @@ export class Presentation {
       slide.notes = old.notes;
       const t = old.transition;
       slide.setTransition(t.effectId, { duration: t.duration, delay: t.delay, automatic: t.automatic });
+      const oldA = sub(sub(sub(old.slide, "transition"), "attributes"), "animationAttributes");
+      if (has(oldA, "direction")) slide.slide.transition.attributes.animationAttributes.direction = oldA.direction;
       slide.skipped = old.skipped;
+      if (old.subtitle !== null && slide.title !== null) slide.addSubtitle(old.subtitle);
       for (const b of old.builds) {
-        if (typeof b.target !== "string" || (b.target === "title" ? slide.titleText : slide.bodyText) === null) continue;
+        if (typeof b.target !== "string") continue;
+        const present = { title: slide.titleText, body: slide.bodyText, subtitle: slide.subtitle }[b.target];
+        if (present === null) continue;
         const delivery = b.delivery.toLowerCase() in builds.DELIVERY_NAMES ? b.delivery.toLowerCase() : undefined;
-        slide.addBuild(b.target, { effect: b.effectId, delivery, duration: b.duration, kind: b.kind });
+        slide.addBuild(b.target, {
+          effect: b.effectId,
+          delivery,
+          duration: b.duration,
+          kind: b.kind,
+          start: b.start,
+          delay: b.delay,
+          direction: b.direction ?? undefined,
+        });
       }
       slide.touched();
     }
@@ -803,6 +908,33 @@ export class Presentation {
     this.showId = target.showId;
     this.show = target.show;
     this.prototypes = target.prototypes;
+  }
+
+  /**
+   * Give every slide (or those in ``slides``) the same transition and builds.
+   *
+   * ``transition`` is an effect name or ``{ effect, duration, direction }``.
+   * Each build is an effect name or ``{ effect, ...addBuild options }``, e.g.
+   * ``{ effect: "wipe", start: "after previous", delay: 0.1 }``. A slide's
+   * existing builds are replaced, and a build is left out where the slide
+   * doesn't show that text or it is empty. Builds play title, then
+   * subtitle, then body.
+   */
+  applyStyle(options: ApplyStyleOptions = {}): void {
+    const { transition, titleBuild, subtitleBuild, bodyBuild } = options;
+    const chosen = options.slides === undefined ? this.slides : options.slides.map((i) => this.slides[this.checkIndex(i)]);
+    for (const slide of chosen) {
+      if (transition !== undefined) {
+        const { effect, ...rest } = typeof transition === "string" ? { effect: transition } : transition;
+        slide.setTransition(effect, rest);
+      }
+      if (titleBuild === undefined && subtitleBuild === undefined && bodyBuild === undefined) continue;
+      slide.clearBuilds();
+      for (const [target, build] of [["title", titleBuild], ["subtitle", subtitleBuild], ["body", bodyBuild]] as const) {
+        if (build === undefined || !(slide[target] ?? "").trim()) continue;
+        slide.addBuild(target, typeof build === "string" ? { effect: build } : build);
+      }
+    }
   }
 
   /** The presentation as Markdown (see ``toMarkdown``). */

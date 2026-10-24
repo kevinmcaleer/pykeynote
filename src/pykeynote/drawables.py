@@ -17,6 +17,7 @@ slide component's ``external_references``.
 from __future__ import annotations
 
 import math
+import re
 from typing import TYPE_CHECKING, Any, Iterable, List, Optional, Sequence, Tuple, Union
 
 from keynote_parser.codec import IWAArchiveSegment, import_version
@@ -72,6 +73,12 @@ def style_named(package: Package, name: str) -> int:
     if name not in styles:
         raise ValueError(f"this theme has no {name!r} style")
     return styles[name]
+
+
+def subtitle_style(package: Package) -> Optional[str]:
+    """The name of the theme's main subtitle paragraph style, e.g. ``"text-2-paragraphstyle-Subtitle"``."""
+    names = [n for n in named_styles(package) if re.fullmatch(r"text-\d+-paragraphstyle-Subtitle", n)]
+    return min(names, key=lambda n: int(n.split("-")[1])) if names else None
 
 
 def add_variation_style(package: Package, parent_id: int) -> Tuple[int, Any]:
@@ -496,6 +503,28 @@ class Shape(Drawable):
         return None
 
     @property
+    def is_subtitle(self) -> bool:
+        """Whether this is a text box in the theme's subtitle style, as :meth:`Slide.add_subtitle` makes."""
+        t = self.text_storage
+        if not self.is_text_box or t is None:
+            return False
+        name = subtitle_style(self._package)
+        entries = t._storage.table_para_style.entries
+        if name is None or not entries:
+            return False
+        style_id, wanted = entries[0].object.identifier, style_named(self._package, name)
+        while style_id:  # the style or a variation of it
+            if style_id == wanted:
+                return True
+            base = self._package.get(style_id).super if style_id in self._package else None
+            while base is not None and "parent" not in base.DESCRIPTOR.fields_by_name:
+                base = getattr(base, "super", None)
+            if base is None or not base.HasField("parent"):
+                return False
+            style_id = base.parent.identifier
+        return False
+
+    @property
     def text_storage(self) -> Optional[Text]:
         a = self._archive
         if not a.HasField("owned_storage"):
@@ -582,6 +611,7 @@ def add_shape(
     text: Union[None, str, Iterable[ParagraphInput]] = None,
     style: int = 0,
     fill: Optional[Color] = None,
+    paragraph_style: Optional[str] = None,
 ) -> Shape:
     p = slide._package
     is_text_box = kind == "text box"
@@ -596,6 +626,8 @@ def add_shape(
 
     style_id = style_named(p, "textbox-0-shapestyle" if is_text_box else f"shape-{style}-shapestyle")
     para_style = p.get(style_id).shape_properties.paragraph_style.identifier
+    if paragraph_style is not None:
+        para_style = style_named(p, paragraph_style)
     list_style = style_named(p, "text-0-liststyle-None")
     sheet_id = stylesheet_id(p)
 

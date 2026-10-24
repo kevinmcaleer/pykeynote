@@ -88,10 +88,12 @@ test("toJSON", async () => {
     index: 3,
     layout: "Title & Bullets",
     title: "Title & Bullets",
+    subtitle: null,
     body: "First bullet\nSecond bullet\nThird bullet",
     notes: "Notes for Title & Bullets",
     skipped: false,
-    transition: { effect: null, duration: 1.0, delay: 0.5, automatic: false },
+    transition: { effect: null, duration: 1.0, delay: 0.5, automatic: false, direction: null },
+    builds: [],
     images: [],
   });
 });
