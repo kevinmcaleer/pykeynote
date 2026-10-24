@@ -13,4 +13,4 @@ from .markdown import from_markdown, parse_markdown
 from .text import Paragraph, UnsupportedTextError
 
 __all__ = ["Build", "CHART_TYPES", "Chart", "Drawable", "Image", "Movie", "SHAPE_KINDS", "Shape", "Table", "Paragraph", "Presentation", "Slide", "Transition", "UnsupportedTextError", "from_markdown", "parse_markdown", "themes"]
-__version__ = "0.3.0"
+__version__ = "0.5.0"
