@@ -98,9 +98,12 @@ without one, such as Dissolve, raises `ValueError`. Each `Build` in
 `slide.builds` has `start`, `delay` and `direction`, and
 `slide.transition.direction` gives the transition's.
 
-Basic White's "Title & Bullets" and several other layouts come with an
-empty subtitle text box, which `add_subtitle` fills; on other layouts it
-adds one under the title. `slide.subtitle` reads or sets it.
+On the "Title" layouts the body placeholder ("Presentation Subtitle") is
+the subtitle, so `add_subtitle` fills it. Basic White's "Title & Bullets"
+and several other layouts come with an empty subtitle text box, which it
+fills instead; on other layouts it adds one under the title.
+`slide.subtitle` reads or sets it. In Markdown, a slide with just a `#`
+title and a `##` subtitle becomes a "Title" slide.
 
 To give a whole deck one look, `apply_style` sets the transition and the
 title, subtitle and body builds on every slide, leaving out a build where a

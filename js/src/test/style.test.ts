@@ -64,7 +64,7 @@ test("subtitles fill the layout's box or add one", async () => {
   bullets.addSubtitle("sub");
   assert.equal(bullets.drawables.length, count);
   const section = deck.addSlide("Section", { title: "S" });
-  assert.ok(section.addSubtitle("added").isSubtitle);
+  assert.ok(section.addSubtitle("added")?.isSubtitle);
   assert.throws(() => section.addSubtitle("again"), /already has a subtitle/);
   const again = await reopen(deck);
   assert.deepEqual(again.slides.map((s) => s.subtitle), ["sub", "added"]);
@@ -160,4 +160,32 @@ test("timing is written as Keynote writes it", async () => {
   s.addBuild("body", { effect: "fade and move", delivery: "by bullet", duration: 0.3, start: "after previous" });
   const again = await reopen(deck);
   assert.deepEqual(chunks(again.slide(0)), chunks(keynote.slide(0)));
+});
+
+test("a subtitle fills the Title layout's body", async () => {
+  // The "Title" layout's body placeholder is "Presentation Subtitle": fill it, don't add a box on top.
+  const deck = await Presentation.create();
+  const s = deck.addSlide("Title", { title: "Open Duck RL" });
+  const count = s.drawables.length;
+  assert.equal(s.addSubtitle("Part 1 of 3: Learning From Mistakes"), null);
+  assert.equal(s.drawables.length, count);
+  assert.equal(s.body, "Part 1 of 3: Learning From Mistakes");
+  assert.equal(s.subtitle, s.body);
+  s.addBuild("title", "wipe");
+  s.addBuild("subtitle", { effect: "wipe", start: "after previous" });
+  const again = (await reopen(deck)).slide(0);
+  assert.deepEqual(again.builds.map((b) => b.target), ["title", "subtitle"]);
+});
+
+test("title card Markdown", async () => {
+  const deck = await fromMarkdown("# Open Duck RL\n## Part 1 of 3: Learning From Mistakes\n");
+  const s = deck.slide(0);
+  assert.equal(s.layout, "Title");
+  assert.equal(s.body, "Part 1 of 3: Learning From Mistakes");
+  const out = (await reopen(deck)).toMarkdown();
+  assert.ok(out.includes("## Part 1 of 3: Learning From Mistakes\n"));
+  assert.equal(out.split("Part 1 of 3").length, 2);
+  assert.equal((await reopen(await fromMarkdown(out))).toMarkdown(), out);
+  deck.applyStyle({ titleBuild: "wipe", subtitleBuild: "wipe", bodyBuild: "fade and move" });
+  assert.deepEqual(deck.slide(0).builds.map((b) => b.target), ["title", "subtitle"]);
 });

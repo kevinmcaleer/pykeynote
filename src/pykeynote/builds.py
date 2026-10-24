@@ -135,6 +135,8 @@ def _set_direction(animation: Any, effect_id: str, direction: Optional[str], dir
 
 def _target_from_ref(slide: "Slide", drawable_id: int) -> Union[str, int]:
     name = _target_name(slide, drawable_id)
+    if name == "body" and slide._body_is_subtitle():
+        return "subtitle"
     if name == drawable_id:
         shape = slide._subtitle_shape()
         if shape is not None and shape.identifier == drawable_id:
@@ -204,6 +206,8 @@ def _resolve_target(slide: "Slide", target: Target) -> int:
     s = slide._slide
     shown = {r.identifier for r in s.drawables_z_order}
     target = getattr(target, "identifier", target)  # a Shape, Table or Chart
+    if target == "subtitle" and slide._body_is_subtitle():
+        target = "body"  # the layout's body placeholder is its subtitle
     if target == "subtitle":
         shape = slide._subtitle_shape()
         if shape is None or shape.identifier not in shown:

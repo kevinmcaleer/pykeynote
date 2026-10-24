@@ -126,6 +126,7 @@ def _image_lines(slide: "Slide", image_dir: Optional[str], names: Dict[str, Set[
 
 def slide_to_markdown(slide: "Slide", image_dir: Optional[str] = None, _names: Optional[Dict[str, Set[str]]] = None) -> str:
     lines: List[str] = [f"<!-- layout: {slide.layout} -->"]
+    subtitle_is_body = False
     t = slide.transition
     if t.effect:
         direction = f" {t.direction}" if t.direction else ""
@@ -149,11 +150,15 @@ def slide_to_markdown(slide: "Slide", image_dir: Optional[str] = None, _names: O
     if slide.title is not None and slide.title.strip():
         lines.append("# " + " ".join(slide.title.split()))
         subtitle = slide.subtitle
+        paragraphs = [p for p in slide.paragraphs if p.text.strip()]
+        if subtitle is not None and slide._body_is_subtitle() and (len(paragraphs) != 1 or "\n" in subtitle):
+            subtitle = None  # a body subtitle of several lines stays body text
         if subtitle is not None:
             lines.append("## " + " ".join(subtitle.split()))
+            subtitle_is_body = slide._body_is_subtitle()
 
     body: List[str] = []
-    for para in slide.paragraphs:
+    for para in [] if subtitle_is_body else slide.paragraphs:
         text = para.text.replace("\n", "<br>").strip()
         if not text:
             continue
@@ -262,6 +267,8 @@ class SlideSpec:
             return "Photo" if photos == 1 else "Photo - 3 Up"
         if self.tables and not self.paragraphs:
             return "Title Only" if self.title else "Blank"
+        if self.title and self.subtitle is not None and not self.paragraphs:
+            return "Title"  # a title card: its body placeholder is the subtitle
         if self.title and self.paragraphs:
             return "Title & Bullets" if bulleted else "Title"
         if self.title:

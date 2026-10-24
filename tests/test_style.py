@@ -225,3 +225,40 @@ def test_timing_written_as_keynote_writes_it(tmp_path):
     assert _chunks(again[0]) == _chunks(keynote[0])
     assert _chunks(again[1]) == _chunks(keynote[1])
     assert [b.start for b in again[0].builds] == [b.start for b in keynote[0].builds]
+
+
+def test_subtitle_fills_title_layout_body(tmp_path):
+    # The "Title" layout's body placeholder is "Presentation Subtitle": fill it, don't add a box on top.
+    deck = Presentation.new()
+    s = deck.add_slide("Title", title="Open Duck RL")
+    count = len(s.drawables)
+    assert s.add_subtitle("Part 1 of 3: Learning From Mistakes") is None
+    assert len(s.drawables) == count
+    assert s.body == s.subtitle == "Part 1 of 3: Learning From Mistakes"
+    s.add_build("title", "wipe")
+    s.add_build("subtitle", "wipe", start="after previous", delay=0.1)
+    again = reopen(deck, tmp_path)[0]
+    assert [b.target for b in again.builds] == ["title", "subtitle"]
+    assert again.builds[1].start == "after previous"
+    with pytest.raises(ValueError, match="already has a subtitle"):
+        again.add_subtitle("again")
+
+
+def test_title_card_markdown(tmp_path):
+    md = "# Open Duck RL\n## Part 1 of 3: Learning From Mistakes\n"
+    deck = from_markdown(md)
+    s = deck[0]
+    assert s.layout == "Title"
+    assert s.body == "Part 1 of 3: Learning From Mistakes"
+    assert [d for d in s.shapes if d.is_subtitle] == []
+    out = reopen(deck, tmp_path).to_markdown()
+    assert "## Part 1 of 3: Learning From Mistakes\n" in out
+    assert out.count("Part 1 of 3") == 1
+    assert reopen(from_markdown(out), tmp_path, "again.key").to_markdown() == out
+
+
+def test_apply_style_on_title_card(tmp_path):
+    deck = from_markdown("# Open Duck RL\n## Part 1 of 3\n")
+    deck.apply_style(title_build="wipe", subtitle_build={"effect": "wipe", "start": "after previous"},
+                     body_build="fade and move")
+    assert [b.target for b in reopen(deck, tmp_path)[0].builds] == ["title", "subtitle"]
