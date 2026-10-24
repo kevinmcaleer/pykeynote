@@ -240,3 +240,31 @@ def test_switched_theme_opens_in_keynote(tmp_path, open_in_keynote):
     live = open_in_keynote(out)
     assert live.theme == theme
     assert [s["title"] for s in live.read_slides()] == ["Why robots? 🤖", "Robots!"]
+
+
+def test_movies_survive_keynote(tmp_path, open_in_keynote):
+    from test_media import png
+
+    media = Presentation.open(FIXTURES / "media-video-audio.key").package
+    clip, tone = media.read_file("Data/clip-9072.mp4"), media.read_file("Data/tone-9074.m4a")
+    deck = Presentation.new()
+    free = deck.add_slide("Blank")
+    video = free.add_movie(clip, position=(200, 200), size=(640, None), description="A test pattern", loop="repeat")
+    free.add_build(video, "dissolve")
+    deck.add_slide("Blank").add_audio(tone, name="tone.m4a")
+    deck.add_slide("Title & Photo", title="Video in placeholder").add_movie(clip, poster=png(640, 360))
+    out = tmp_path / "movies.key"
+    deck.save(out)
+
+    live = open_in_keynote(out)
+    assert len(live) == 3
+    resaved = tmp_path / "movies-resaved.key"
+    live.save(resaved)
+    again = Presentation.open(resaved)
+    (v,) = again[0].movies
+    assert (v.position, v.size, v.loop, v.description) == ((200, 200), (640, 360), "repeat", "A test pattern")
+    assert v.data == clip and again[0].builds[0].target == v.identifier
+    (s,) = again[1].movies
+    assert s.audio_only and s.data == tone
+    (p,) = again[2].movies
+    assert p.placeholder == "Media" and p.data == clip

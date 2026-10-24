@@ -67,7 +67,7 @@ class Image:
 
 # --- image files ---------------------------------------------------------------
 
-_EXTENSIONS = {"png": "png", "jpeg": "jpeg", "gif": "gif"}
+_EXTENSIONS = {"png": "png", "jpeg": "jpeg", "gif": "gif", "mp4": "mp4", "m4v": "m4v", "mov": "mov", "m4a": "m4a"}
 
 
 def image_format(data: bytes) -> Tuple[str, int, int]:
@@ -114,8 +114,11 @@ def _file_names(name: str, fmt: str, data_id: int) -> Tuple[str, str]:
     return f"{stem}.{ext}", f"{stem}-{data_id}.{ext}"
 
 
-def add_data(package: Package, data: bytes, name: str, fmt: str, pixel_size: Tuple[int, int]) -> int:
-    """Store ``data`` in ``Data/`` and return its data identifier. The same bytes are stored once."""
+def add_data(package: Package, data: bytes, name: str, fmt: str, pixel_size: Optional[Tuple[int, int]]) -> int:
+    """Store ``data`` in ``Data/`` and return its data identifier. The same bytes are stored once.
+
+    ``pixel_size`` is for pictures; movies and sound go without one.
+    """
     digest = hashlib.sha1(data).digest()
     meta = package.metadata
     for info in meta.datas:
@@ -129,9 +132,10 @@ def add_data(package: Package, data: bytes, name: str, fmt: str, pixel_size: Tup
     info.preferred_file_name = preferred
     info.file_name = file_name
     info.materialized_length = len(data)
-    attrs = info.attributes.Extensions[_image_data_attributes()]
-    attrs.pixel_size.width, attrs.pixel_size.height = pixel_size
-    attrs.should_be_interpreted_as_generic_if_untagged = False
+    if pixel_size is not None:
+        attrs = info.attributes.Extensions[_image_data_attributes()]
+        attrs.pixel_size.width, attrs.pixel_size.height = pixel_size
+        attrs.should_be_interpreted_as_generic_if_untagged = False
     package.write_file(f"Data/{file_name}", data)
     package.mark_changed(METADATA_ID)
     return data_id
@@ -485,11 +489,16 @@ def _replace(
 
 
 def remove_image(slide: "Slide", target: Target) -> None:
+    remove_drawable_media(slide, _resolve(slide, target))
+
+
+def remove_drawable_media(slide: "Slide", object_id: int) -> None:
+    """Delete an image or movie, its mask, title and caption, its builds, and data nothing else uses."""
     from . import builds as _builds
 
     p = slide._package
     s = slide._slide
-    image_id = _resolve(slide, target)
+    image_id = object_id
     image = p.get(image_id)
     component = p.component_for_file(p.file_of(slide._slide_id))
     _builds.remove_builds_for(slide, image_id)
@@ -497,7 +506,7 @@ def remove_image(slide: "Slide", target: Target) -> None:
     data_ids = list(p.segment(image_id).header.message_infos[0].data_references)
     _drop_data(p, component, image_id, data_ids)
     gone = {image_id}
-    if image.HasField("mask") and image.mask.identifier in p:
+    if "mask" in image.DESCRIPTOR.fields_by_name and image.HasField("mask") and image.mask.identifier in p:
         gone.add(image.mask.identifier)
     for f in ("title", "caption"):
         if image.super.HasField(f) and getattr(image.super, f).identifier in p:

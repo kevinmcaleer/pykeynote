@@ -37,6 +37,8 @@ right", "from top" or "from bottom").
 
 An image fills the layout's next media placeholder, or, if its title gives
 a frame (``"x,y"`` or ``"x,y widthxheight"``, in points), goes exactly there.
+Videos and sounds (``.mp4``, ``.m4v``, ``.mov``, ``.m4a``) use the same
+syntax; a sound has no picture, so it never fills a placeholder.
 """
 
 from __future__ import annotations
@@ -67,21 +69,38 @@ def _fmt_number(value: float) -> str:
     return f"{round(value, 1):g}"
 
 
+MEDIA_EXTENSIONS = (".mp4", ".m4v", ".mov", ".m4a")
+_AUDIO_EXTENSIONS = (".m4a",)
+
+
 def _image_names(presentation: "Presentation") -> Dict[str, Set[str]]:
-    """Each name images were added under, with the files stored under it."""
+    """Each name images, videos and sounds were added under, with the files stored under it."""
     names: Dict[str, Set[str]] = {}
     for slide in presentation.slides:
-        for image in slide.images:
-            if image.name:
-                names.setdefault(image.name, set()).add(image.filename)
+        for item in [*slide.images, *slide.movies]:
+            if item.name:
+                names.setdefault(item.name, set()).add(item.filename)
     return names
+
+
+def _reading_order(items: List[Any]) -> List[Any]:
+    """Left to right and top to bottom, with tops within 20 points of each other as one row."""
+    rows: List[List[Any]] = []
+    for item in sorted(items, key=lambda i: i.position[1]):
+        if rows and item.position[1] - rows[-1][0].position[1] <= 20:
+            rows[-1].append(item)
+        else:
+            rows.append([item])
+    return [item for row in rows for item in sorted(row, key=lambda i: i.position[0])]
 
 
 def _image_lines(slide: "Slide", image_dir: Optional[str], names: Dict[str, Set[str]]) -> List[str]:
     lines = []
-    placeholders = [i for i in slide.placeholders if not i.is_sample]
-    free = [i for i in slide.images if i.placeholder is None and not i.is_sample]
-    for image in placeholders + free:
+    images = [i for i in slide.images if not i.is_sample]
+    movies = [m for m in slide.movies if m.data is not None]
+    placed = _reading_order([i for i in images + movies if i.placeholder is not None])
+    free = [i for i in images + movies if i.placeholder is None]
+    for image in placed + free:
         # The name it was added under, unless another picture in the deck has it too.
         path = image.name if names.get(image.name, {image.filename}) == {image.filename} else image.filename
         if image_dir is not None:
@@ -93,7 +112,12 @@ def _image_lines(slide: "Slide", image_dir: Optional[str], names: Dict[str, Set[
             path = f"<{path}>"
         alt = " ".join(image.description.split()).replace("]", "\\]")
         frame = ""
-        if image.placeholder is None:
+        if getattr(image, "audio_only", False):
+            # A sound has no size, and sits in the middle of the slide unless moved.
+            (x, y), (w, h) = image.position, slide.presentation.size
+            if (round(x, 1), round(y, 1)) != (round(w / 2, 1), round(h / 2, 1)):
+                frame = f' "{_fmt_number(x)},{_fmt_number(y)}"'
+        elif image.placeholder is None:
             (x, y), (w, h) = image.position, image.size
             frame = f' "{_fmt_number(x)},{_fmt_number(y)} {_fmt_number(w)}x{_fmt_number(h)}"'
         lines.append(f"![{alt}]({path}{frame})")
@@ -229,7 +253,7 @@ class SlideSpec:
 
     def default_layout(self) -> str:
         bulleted = any(p.bulleted for p in self.paragraphs)
-        photos = len([i for i in self.images if i.position is None])
+        photos = len([i for i in self.images if i.position is None and not i.path.lower().endswith(_AUDIO_EXTENSIONS)])
         if photos:
             if self.paragraphs:
                 return "Title, Bullets & Photo"
@@ -478,7 +502,14 @@ def from_markdown(
             path = image.path
             if not re.match(r"^[a-z]+://", path) and not os.path.isabs(path):
                 path = os.path.join(base_dir or os.getcwd(), path)
-            if image.position is not None:
+            ext = os.path.splitext(image.path.lower())[1]
+            if ext in _AUDIO_EXTENSIONS:
+                slide.add_audio(path, image.position, image.description)
+            elif ext in MEDIA_EXTENSIONS and image.position is not None:
+                slide.add_movie(path, image.position, image.size, image.description, placeholder=False)
+            elif ext in MEDIA_EXTENSIONS:
+                slide.add_movie(path, description=image.description)
+            elif image.position is not None:
                 slide.add_image(path, image.position, image.size, image.description, placeholder=False)
             else:
                 slide.add_image(path, description=image.description)

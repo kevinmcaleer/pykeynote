@@ -69,6 +69,8 @@ def slide_detail(slide: Slide) -> Dict[str, Any]:
         entry["id"] = d.identifier
     for i, entry in zip(slide.images, out["images"]):
         entry["id"] = i.identifier
+    for m, entry in zip(slide.movies, out["movies"]):
+        entry["id"] = m.identifier
     out["paragraphs"] = [{"text": p.text, "level": p.level, "bulleted": p.bulleted} for p in slide.paragraphs]
     return out
 
@@ -327,6 +329,44 @@ def remove_image(path: str, index: int, target: Union[int, str], output: Optiona
     deck = _open(path)
     slide = deck[deck._check_index(index)]
     slide.remove_image(_image(slide, target))
+    _save(deck, output)
+    return slide_detail(slide)
+
+
+def add_movie(
+    path: str,
+    index: int,
+    file: str,
+    x: Optional[float] = None,
+    y: Optional[float] = None,
+    width: Optional[float] = None,
+    height: Optional[float] = None,
+    description: Optional[str] = None,
+    placeholder: Union[None, bool, str] = None,
+    loop: str = "none",
+    volume: float = 1.0,
+    poster: Optional[str] = None,
+    output: Optional[str] = None,
+) -> Dict[str, Any]:
+    _frame(x, y)
+    deck = _open(path)
+    slide = deck[deck._check_index(index)]
+    position = None if x is None else (x, y)
+    size = None if width is None and height is None else (width, height)
+    slide.add_movie(_full(file), position, size, description, placeholder, poster and _full(poster), loop, volume)
+    _save(deck, output)
+    return slide_detail(slide)
+
+
+def remove_movie(path: str, index: int, target: Union[int, str], output: Optional[str] = None) -> Dict[str, Any]:
+    deck = _open(path)
+    slide = deck[deck._check_index(index)]
+    if isinstance(target, int):
+        found = [m for m in slide.movies if m.identifier == target]
+        if not found:
+            raise ValueError(f"no video or sound with id {target} on slide {slide.index}; read_slide lists them with their ids")
+        target = found[0]
+    slide.remove_movie(target)
     _save(deck, output)
     return slide_detail(slide)
 
@@ -753,6 +793,48 @@ TOOLS: List[Dict[str, Any]] = [
         "description": "Delete an image from a slide, with any builds on it. Saves the deck.",
         "inputSchema": _schema(
             {"path": _PATH, "index": _INDEX, "target": _IMAGE_TARGET, "output": _OUTPUT}, ["path", "index", "target"]
+        ),
+        "destructive": True,
+    },
+    {
+        "name": "add_movie",
+        "function": add_movie,
+        "description": (
+            "Add a video or sound to a slide: an MPEG-4 or QuickTime file (.mp4, .m4v, "
+            ".mov or .m4a). A video goes where an image would: with no x, y, width or "
+            "height it fills the layout's first empty media placeholder, else it goes "
+            "on top, centred unless x and y are given. A sound has no picture and sits "
+            "in the middle of the slide. " + _UNITS + " Saves the deck."
+        ),
+        "inputSchema": _schema(
+            {
+                "path": _PATH,
+                "index": _INDEX,
+                "file": {"type": "string", "description": "Path to the video or sound file"},
+                **_FRAME,
+                "description": {"type": "string", "description": "Accessibility description (alt text)"},
+                "placeholder": {
+                    "description": "false to never use a placeholder, or a placeholder tag such as Media-2",
+                    "anyOf": [{"type": "boolean"}, {"type": "string"}],
+                },
+                "loop": {"type": "string", "enum": ["none", "repeat", "back and forth"]},
+                "volume": {"type": "number", "minimum": 0, "maximum": 1},
+                "poster": {"type": "string", "description": "Path to a PNG, JPEG or GIF shown before the video plays"},
+                "output": _OUTPUT,
+            },
+            ["path", "index", "file"],
+        ),
+    },
+    {
+        "name": "remove_movie",
+        "function": remove_movie,
+        "description": "Delete a video or sound from a slide, with any builds on it. Saves the deck.",
+        "inputSchema": _schema(
+            {"path": _PATH, "index": _INDEX,
+             "target": {"description": "The video or sound's id from read_slide, or the placeholder tag it fills",
+                        "anyOf": [{"type": "integer"}, {"type": "string"}]},
+             "output": _OUTPUT},
+            ["path", "index", "target"],
         ),
         "destructive": True,
     },

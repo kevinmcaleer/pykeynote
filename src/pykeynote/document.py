@@ -12,11 +12,13 @@ from . import charts as _charts
 from . import tables as _tables
 from . import drawables as _drawables
 from . import media as _media
+from . import movies as _movies
 from . import slides
 from .builds import Build
 from .charts import Chart
 from .drawables import Color, Drawable, Shape
 from .media import Image, ImageSource
+from .movies import MediaSource, Movie
 from .tables import Table
 from .package import Package, PathLike, remap_references
 from .text import Paragraph, ParagraphInput, Text
@@ -499,6 +501,55 @@ class Slide:
         """Delete an image, and any builds on it."""
         _media.remove_image(self, image)
 
+    @property
+    def movies(self) -> List[Movie]:
+        """The slide's videos and sounds, back to front."""
+        return _movies.read_movies(self)
+
+    def add_movie(
+        self,
+        source: MediaSource,
+        position: Optional[Tuple[float, float]] = None,
+        size: Optional[Tuple[Optional[float], Optional[float]]] = None,
+        description: Optional[str] = None,
+        placeholder: Union[None, bool, str] = None,
+        poster: Optional[ImageSource] = None,
+        loop: str = "none",
+        volume: float = 1.0,
+        name: Optional[str] = None,
+    ) -> Movie:
+        """Add a video or a sound: an MPEG-4 or QuickTime file (.mp4, .m4v, .mov or .m4a), from a path or bytes.
+
+        A video goes where an image would (see :meth:`add_image`): into the
+        first media placeholder still showing the theme's sample photo,
+        fitted inside it, unless ``position`` or ``size`` is given. A sound
+        has no picture, so it sits in the middle of the slide unless
+        ``position`` says. ``poster`` is the picture shown before a video
+        plays (black otherwise). ``loop`` is ``"none"``, ``"repeat"`` or
+        ``"back and forth"``, and ``volume`` goes from 0 to 1.
+        """
+        return _movies.add_movie(self, source, position, size, description, placeholder, poster, loop, volume, name)
+
+    def add_audio(
+        self,
+        source: MediaSource,
+        position: Optional[Tuple[float, float]] = None,
+        description: Optional[str] = None,
+        loop: str = "none",
+        volume: float = 1.0,
+        name: Optional[str] = None,
+    ) -> Movie:
+        """Add a sound: an .m4a file, or another MPEG-4 or QuickTime file with no picture. See :meth:`add_movie`."""
+        movie = _movies.add_movie(self, source, position, None, description, False, None, loop, volume, name)
+        if not movie.audio_only:
+            self.remove_movie(movie)
+            raise ValueError("that file has a picture: add it with add_movie")
+        return movie
+
+    def remove_movie(self, movie: Union[Movie, int, str]) -> None:
+        """Delete a video or sound (a :class:`Movie`, its index in :attr:`movies`, or a placeholder tag), and any builds on it."""
+        _movies.remove_movie(self, movie)
+
     def to_dict(self) -> dict:
         t = self.transition
         return {
@@ -540,6 +591,18 @@ class Slide:
                     "filename": i.filename,
                 }
                 for i in self.images
+            ],
+            "movies": [
+                {
+                    "position": list(m.position),
+                    "size": list(m.size),
+                    "duration": m.duration,
+                    "audio_only": m.audio_only,
+                    "description": m.description,
+                    "placeholder": m.placeholder,
+                    "filename": m.filename,
+                }
+                for m in self.movies
             ],
         }
 

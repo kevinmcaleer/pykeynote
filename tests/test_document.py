@@ -109,4 +109,5 @@ def test_to_dict(layouts):
         "transition": {"effect": None, "duration": 1.0, "delay": 0.5, "automatic": False, "direction": None},
         "builds": [],
         "images": [],
+        "movies": [],
     }
