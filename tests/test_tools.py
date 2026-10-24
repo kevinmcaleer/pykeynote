@@ -296,3 +296,24 @@ def test_cli_objects(tmp_path, capsys):
 
     code, _, err = run(capsys, "table", key, 0)
     assert code == 1 and "--csv" in err
+
+
+def test_cli_and_tools_movies(tmp_path, capsys):
+    p = Presentation.open(Path(__file__).parent / "fixtures" / "media-video-audio.key").package
+    clip, tone = tmp_path / "clip.mp4", tmp_path / "tone.m4a"
+    clip.write_bytes(p.read_file("Data/clip-9072.mp4"))
+    tone.write_bytes(p.read_file("Data/tone-9074.m4a"))
+    key = tmp_path / "talk.key"
+    run(capsys, "new", key)
+    assert run(capsys, "movie", key, 0, clip, "--x", "10", "--y", "10", "--loop", "repeat", "--alt", "pattern")[0] == 0
+    detail = tools.add_movie(str(key), 0, str(tone), volume=0.5)
+    video, sound = detail["movies"]
+    assert (video["audio_only"], video["description"], sound["audio_only"]) == (False, "pattern", True)
+
+    code, out, _ = run(capsys, "show", key, 0)
+    assert "video (id" in out and "sound (id" in out and "2.5s" in out
+    assert run(capsys, "build", key, 0, "--target", video["id"])[0] == 0
+    assert run(capsys, "remove", key, 0, video["id"])[0] == 0
+    assert tools.remove_movie(str(key), 0, sound["id"])["movies"] == []
+    s = Presentation.open(key)[0]
+    assert s.movies == [] and s.builds == []

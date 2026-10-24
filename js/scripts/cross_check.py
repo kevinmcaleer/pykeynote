@@ -45,6 +45,7 @@ def view(deck: Presentation) -> list:
     for slide in deck:
         ids = [d.identifier for d in slide.drawables]
         d = slide.to_dict()
+        assert d.pop("movies") == []  # keynotejs has no video or sound yet
         d["builds"] = [
             {
                 "target": f"drawable {ids.index(b.target)}" if isinstance(b.target, int) else b.target,

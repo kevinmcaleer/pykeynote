@@ -99,6 +99,27 @@ given. A placeholder still showing the theme's sample photo has
 the file. `slide.placeholders` lists the layout's placeholders in reading
 order. Images can have builds too: `slide.add_build(image.identifier, "dissolve")`.
 
+## Video and sound
+
+```python
+slide = deck.add_slide("Title & Photo", title="It moves")
+slide.add_movie("demo.mp4", description="The robot driving")   # fills the photo placeholder
+slide = deck.add_slide("Blank")
+video = slide.add_movie("demo.mp4", position=(200, 200), size=(640, None), loop="repeat", poster="frame.png")
+slide.add_audio("theme.m4a", volume=0.5)
+slide.add_build(video, "dissolve")
+
+for movie in slide.movies:      # back to front
+    print(movie.audio_only, movie.duration, movie.position, movie.size, movie.filename)
+slide.remove_movie(0)            # by index, Movie, or placeholder tag
+```
+
+pykeynote takes MPEG-4 and QuickTime files (`.mp4`, `.m4v`, `.mov`,
+`.m4a`), and reads their length and picture size itself. A video goes where
+an image would, fitted inside a placeholder; a sound has no picture, so it
+sits in the middle of the slide. pykeynote can't decode video, so the poster
+(the frame shown before a video plays) is black unless you pass `poster=`.
+
 `add_slide` copies a slide that already uses the layout, so it keeps the
 theme's look. A deck from `Presentation.new()` has one of every layout to
 copy from, kept out of sight and left out when you save. For a deck you
@@ -224,7 +245,10 @@ from there; image paths in `from_markdown` are relative to `base_dir`.
 
 ![A small wheeled robot](talk-images/robot.jpg)
 ![Logo](talk-images/logo.png "1600,40 200x100")
+![The robot driving](talk-images/demo.mp4 "100,600 640x360")
 ```
+
+Videos and sounds use the image syntax too, picked out by their extension.
 
 ## Command line
 
@@ -248,16 +272,17 @@ pykeynote themes
 pykeynote image talk.key 2 robot.png --alt "A robot arm"   # fills the media placeholder if there is one
 pykeynote image talk.key 2 arm.png --x 100 --y 200 --width 600
 pykeynote image talk.key 2 new.png --replace Media      # or an image id from 'show'
+pykeynote movie talk.key 2 demo.mp4 --loop repeat     # a video or sound (.mp4, .m4v, .mov, .m4a)
 pykeynote shape talk.key 1 --kind star --text "New!" --fill "#ff3366" --x 1500 --y 100 --width 300 --height 300
 pykeynote textbox talk.key 1 "Source: our survey" --x 100 --y 980
 pykeynote table talk.key 3 --csv scores.csv             # or --row Name,Score --row Ada,3
 pykeynote chart talk.key 4 column --csv sales.csv       # column names in row 1, row names in column 1
 pykeynote build talk.key 4 --target 2655081             # build an object in, by its id from 'show'
-pykeynote remove talk.key 4 2655081                     # delete a shape, table, chart or image
+pykeynote remove talk.key 4 2655081                     # delete a shape, table, chart, image or movie
 ```
 
 Slide indexes start at 0, and negative ones count from the end. `show`
-lists each shape, table, chart and image with an id, which `build --target`
+lists each shape, table, chart, image, video and sound with an id, which `build --target`
 and `remove` take. Positions and sizes are in points from the slide's top
 left; anything placed without `--x` and `--y` is centred. Each
 `--body` is one paragraph; two leading spaces indent it one level. Editing
@@ -272,7 +297,7 @@ It has no extra dependencies, and needs a pykeynote release newer than 0.2.0.
 Its tools are `list_themes`, `deck_info`,
 `read_slide`, `export_markdown`, `create_deck`, `edit_slide`, `add_slide`,
 `delete_slide`, `move_slide`, `duplicate_slide`, `apply_theme`, `add_build`,
-`clear_builds`, `add_image`, `replace_image`, `remove_image`, `add_shape`,
+`clear_builds`, `add_image`, `replace_image`, `remove_image`, `add_movie`, `remove_movie`, `add_shape`,
 `add_text_box`, `add_table`, `add_chart` and `delete_drawable`. Editing tools save the deck when they finish, or write a copy
 when given `output`.
 
@@ -312,8 +337,9 @@ Then ask something like "Make a five-slide deck about robot arms in
 4. Build animations on titles and bodies. **Done.**
 5. More bundled themes and switching a deck's theme. **Done.**
 6. A command line tool and an MCP server for LLMs. **Done.**
-7. Images: read, add, fill placeholders, replace and remove, with Markdown support. **Done.** Images, shapes, tables and charts are in the CLI and MCP tools too. Next: video and audio (#33).
+7. Images: read, add, fill placeholders, replace and remove, with Markdown support. **Done.** Images, shapes, tables and charts are in the CLI and MCP tools too.
 8. Shapes, text boxes, tables and charts, with builds on them and tables in Markdown. **Done.**
+9. Video and sound, with Markdown, CLI and MCP support. **Done.**
 
 ## Tests
 

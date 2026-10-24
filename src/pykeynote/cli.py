@@ -114,6 +114,12 @@ def _print_slide(s: Dict[str, Any]) -> None:
         w, h = i["size"]
         what = i["placeholder"] and f"placeholder {i['placeholder']}" or i["filename"] or ""
         print(f"image (id {i['id']}): {what}  at {x:g},{y:g} size {w:g}x{h:g}")
+    for m in s["movies"]:
+        x, y = m["position"]
+        w, h = m["size"]
+        kind = "sound" if m["audio_only"] else "video"
+        what = m["placeholder"] and f"placeholder {m['placeholder']}" or m["filename"] or ""
+        print(f"{kind} (id {m['id']}): {what}  {m['duration']:g}s  at {x:g},{y:g} size {w:g}x{h:g}")
     for b in s["builds"]:
         print(f"build: {b['target']} {b['kind']}, {b['effect']}, {b['delivery']}, {b['duration']:g}s")
     if s["notes"]:
@@ -161,6 +167,11 @@ def _run(args: argparse.Namespace) -> Any:
         placeholder = False if args.no_placeholder else args.placeholder
         return tools.add_image(args.deck, args.index, args.file, description=args.alt, placeholder=placeholder,
                                output=args.output, **_frame(args))
+    if c == "movie":
+        placeholder = False if args.no_placeholder else args.placeholder
+        return tools.add_movie(args.deck, args.index, args.file, description=args.alt, placeholder=placeholder,
+                               loop=args.loop, volume=args.volume, poster=args.poster, output=args.output,
+                               **_frame(args))
     if c == "shape":
         return tools.add_shape(args.deck, args.index, args.kind, _body(args.text), args.fill, args.style,
                                output=args.output, **_frame(args))
@@ -178,6 +189,8 @@ def _run(args: argparse.Namespace) -> Any:
         slide = tools.read_slide(args.deck, args.index)
         if isinstance(target, int) and any(d["id"] == target for d in slide["drawables"]):
             return tools.delete_drawable(args.deck, args.index, target, args.output)
+        if any(m["id"] == target or m["placeholder"] == target for m in slide["movies"]):
+            return tools.remove_movie(args.deck, args.index, target, args.output)
         return tools.remove_image(args.deck, args.index, target, args.output)
     raise AssertionError(c)
 
@@ -279,6 +292,16 @@ def parser() -> argparse.ArgumentParser:
     cp.add_argument("--no-placeholder", action="store_true", help="don't fill a media placeholder")
     cp.add_argument("--replace", metavar="TARGET", help="swap the picture in this image id or placeholder instead")
 
+    cp = command("movie", "add a video or sound (.mp4, .m4v, .mov or .m4a)", index=True, writes=True)
+    cp.add_argument("file", help="the video or sound file")
+    frame(cp)
+    cp.add_argument("--alt", help="accessibility description")
+    cp.add_argument("--placeholder", help="fill this media placeholder, e.g. Media-2")
+    cp.add_argument("--no-placeholder", action="store_true", help="don't fill a media placeholder")
+    cp.add_argument("--loop", default="none", choices=["none", "repeat", "back and forth"])
+    cp.add_argument("--volume", type=float, default=1.0, help="from 0 to 1")
+    cp.add_argument("--poster", help="a PNG, JPEG or GIF shown before the video plays")
+
     cp = command("shape", "add a shape", index=True, writes=True)
     cp.add_argument("--kind", default="rectangle", help="e.g. rectangle, oval, star, arrow")
     cp.add_argument("--text", action="append", help=body_help)
@@ -305,7 +328,7 @@ def parser() -> argparse.ArgumentParser:
     cp.add_argument("--legend", choices=["yes", "no"])
     frame(cp)
 
-    cp = command("remove", "delete a shape, text box, table, chart or image by its id from 'show'",
+    cp = command("remove", "delete a shape, text box, table, chart, image, video or sound by its id from 'show'",
                  index=True, writes=True)
     cp.add_argument("target", help="the id, or a media placeholder tag such as Media")
 
