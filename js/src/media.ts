@@ -457,7 +457,8 @@ function replace(
   ]) {
     clear(image, f);
   }
-  if (description !== undefined) image.super.accessibility_description = description;
+  // The old description was of the old picture, as with the theme's sample photos.
+  image.super.accessibility_description = description ?? "";
   const dataId = addData(p, data, name, fmt, pixelSize);
   image.data = create("TSP.DataReference", { identifier: dataId });
   dropData(p, component, imageId, oldData.filter((d) => d !== dataId));

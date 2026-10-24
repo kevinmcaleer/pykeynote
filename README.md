@@ -315,17 +315,14 @@ Then ask something like "Make a five-slide deck about robot arms in
 7. Images: read, add, fill placeholders, replace and remove, with Markdown support. **Done.** Images, shapes, tables and charts are in the CLI and MCP tools too. Next: video and audio (#33).
 8. Shapes, text boxes, tables and charts, with builds on them and tables in Markdown. **Done.**
 
-## Driving Keynote directly (legacy)
-
-`pykeynote.scripting` controls a running copy of Keynote on a Mac through
-AppleScript and JXA. It can already edit decks, but it will be removed once
-the file-based engine catches up.
-
 ## Tests
 
 ```sh
 pytest                                    # everything that runs without Keynote
-PYKEYNOTE_INTEGRATION=1 pytest            # also drive real Keynote (macOS)
+PYKEYNOTE_INTEGRATION=1 pytest            # also open the results in real Keynote (macOS)
 ```
+
+The integration tests drive Keynote 14.5 by bundle id. Set
+`PYKEYNOTE_KEYNOTE_ID=com.apple.Keynote` to use Keynote Creator Studio.
 
 The sample decks in `tests/fixtures/` were made in Keynote 14.5.

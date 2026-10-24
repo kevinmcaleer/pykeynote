@@ -29,6 +29,15 @@ test("read a placeholder's sample photo", async () => {
   assert.ok(image.description);
 });
 
+test("a new picture drops the sample photo's description", async () => {
+  // Keynote shows the sample photo's caption as the new picture's description otherwise.
+  const slide = (await Presentation.create()).addSlide("Title & Photo", { title: "Robots" });
+  assert.ok(slide.placeholders[0].description);
+  const image = slide.addImage(png(20, 10));
+  assert.equal(image.description, "");
+  assert.equal(slide.replaceImage(image, png(10, 10)).description, "");
+});
+
 test("fill a placeholder", async () => {
   const deck = await Presentation.create();
   const slide = deck.addSlide("Title & Photo", { title: "Robots" });

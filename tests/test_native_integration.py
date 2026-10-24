@@ -9,8 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from pykeynote import KeynoteError, Paragraph, Presentation
-from pykeynote import scripting
+from pykeynote import Paragraph, Presentation
+
+from keynote_app import Document, KeynoteError
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -28,7 +29,7 @@ def open_in_keynote():
     opened = []
 
     def _open(path):
-        deck = scripting.Presentation.open(path)
+        deck = Document(path)
         opened.append(deck)
         return deck
 
