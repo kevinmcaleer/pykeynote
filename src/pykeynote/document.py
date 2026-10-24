@@ -33,6 +33,14 @@ class Transition:
     delay: float
     automatic: bool
     effect_id: str  # Keynote's own name for the effect, e.g. "apple:dissolve"
+    direction: Optional[str] = None  # e.g. "from left"; None if it has none or isn't known
+
+
+# Transitions that take a direction, with the one Keynote uses when it leaves the field out.
+_TRANSITION_DIRECTIONAL = {
+    "apple:wipe": "from left",
+    "apple:push": None,
+}
 
 
 def _effect_name(effect_id: str) -> Optional[str]:
@@ -174,6 +182,7 @@ class Slide:
             delay=a.delay,
             automatic=a.is_automatic,
             effect_id=a.effect,
+            direction=_builds.direction_name(a.direction, _TRANSITION_DIRECTIONAL.get(a.effect)),
         )
 
     @skipped.setter
@@ -187,17 +196,21 @@ class Slide:
         duration: Optional[float] = None,
         delay: Optional[float] = None,
         automatic: Optional[bool] = None,
+        direction: Optional[str] = None,
     ) -> None:
-        """Set the transition into the next slide, e.g. ``set_transition("dissolve", 1.5)``.
+        """Set the transition into the next slide, e.g. ``set_transition("wipe", 0.75, direction="from right")``.
 
-        ``effect`` is a name such as ``"dissolve"``, ``"push"`` or ``"magic
-        move"``, Keynote's own id such as ``"apple:dissolve"``, or ``None`` to
-        remove the transition. Dissolve, push and magic move are checked
-        against real Keynote files; other names follow the same pattern.
+        ``effect`` is a name such as ``"dissolve"``, ``"wipe"``, ``"push"`` or
+        ``"magic move"``, Keynote's own id such as ``"apple:dissolve"``, or
+        ``None`` to remove the transition. Dissolve, wipe, push and magic move
+        are checked against real Keynote files; other names follow the same
+        pattern. ``direction`` is "from left", "from right", "from top" or
+        "from bottom", for effects that move (Wipe goes from left by default).
         """
         attrs = self._slide.transition.attributes
         a = attrs.animationAttributes
         effect_id = _effect_id(effect)
+        _builds._set_direction(a, effect_id, direction, _TRANSITION_DIRECTIONAL, "transition")
         a.effect = effect_id
         for field in ("custom_magic_move_fade_unmatched_objects", "custom_timing_curve", "custom_text_delivery_type"):
             attrs.ClearField(field)
@@ -232,16 +245,24 @@ class Slide:
         delivery: Optional[str] = None,
         duration: float = 1.0,
         kind: str = "in",
+        start: str = "on click",
+        delay: float = 0.0,
+        direction: Optional[str] = None,
     ) -> Build:
-        """Animate ``target`` ("title", "body", a shape, table or chart, or its identifier) onto the slide.
+        """Animate ``target`` ("title", "subtitle", "body", a shape, table or chart, or its identifier) onto the slide.
 
+        ``effect`` is a build effect such as "dissolve", "move in", "wipe" or
+        "fade and move", or Keynote's own id such as "apple:dissolve character".
         ``delivery`` is "all at once" or "by bullet" (also "by paragraph");
         it defaults to "by bullet" for a body with several paragraphs. Each
-        build plays after the ones added before it, one click per step.
-        ``effect`` is a build effect such as "dissolve" or "move in", or
-        Keynote's own id such as "apple:dissolve character".
+        build plays after the ones added before it. ``start`` says when it
+        plays: "on click", or by itself "after previous" or "with previous"
+        step, as Keynote's Build Order panel puts it; ``delay`` is the
+        seconds its first step waits. As in Keynote, each bullet of a build
+        "by bullet" starts the same way as the first. ``direction`` is "from left", "from right", "from
+        top" or "from bottom", for effects that move.
         """
-        return _builds.add_build(self, target, effect, delivery, duration, kind)
+        return _builds.add_build(self, target, effect, delivery, duration, kind, start, delay, direction)
 
     def clear_builds(self) -> None:
         """Remove every build from the slide."""
@@ -308,6 +329,56 @@ class Slide:
         """Add a text box in the theme's text box style."""
         x, y, width, height = self._default_frame(width, height, x, y, 600, 80)
         return _drawables.add_shape(self, "text box", x, y, width, height, text=text)
+
+    def add_subtitle(self, text: Union[str, Iterable[ParagraphInput]]) -> Shape:
+        """Give the slide a subtitle under its title, in the theme's Subtitle paragraph style.
+
+        Layouts such as Basic White's "Title & Bullets" come with an empty
+        subtitle text box, which this fills. Otherwise it adds one that spans
+        the title's width and tucks under its last line, as Keynote places it.
+        Builds can target it as ``"subtitle"``.
+        """
+        shape = self._subtitle_shape()
+        if shape is not None:
+            if shape.text.strip():
+                raise ValueError(f"slide {self.index} already has a subtitle")
+            shape.text = text
+            return shape
+        s = self._slide
+        shown = {r.identifier for r in s.drawables_z_order}
+        if not s.HasField("titlePlaceholder") or s.titlePlaceholder.identifier not in shown:
+            raise ValueError(f"the {self.layout!r} layout doesn't show a title for a subtitle to go under")
+        style = _drawables.subtitle_style(self._package)
+        if style is None:
+            raise ValueError("this theme has no Subtitle paragraph style")
+        size = self._package.get(_drawables.style_named(self._package, style)).char_properties.font_size
+        g = self._package.get(s.titlePlaceholder.identifier)
+        while "geometry" not in g.DESCRIPTOR.fields_by_name:
+            g = g.super
+        g = g.geometry
+        # As in Basic White's "Title & Bullets": the subtitle's top is a fifth of
+        # its font size above the title's bottom, and one line is 1.34 font sizes high.
+        y = g.position.y + g.size.height - 0.2 * size
+        return _drawables.add_shape(
+            self, "text box", g.position.x, y, g.size.width, round(size * 1.3383, 4), text=text, paragraph_style=style
+        )
+
+    @property
+    def subtitle(self) -> Optional[str]:
+        """The subtitle under the title (see :meth:`add_subtitle`), or ``None`` if it has none or it is empty."""
+        shape = self._subtitle_shape()
+        return shape.text if shape is not None and shape.text.strip() else None
+
+    @subtitle.setter
+    def subtitle(self, value: Optional[str]) -> None:
+        shape = self._subtitle_shape()
+        if shape is not None:
+            shape.text = value or ""
+        elif value:
+            self.add_subtitle(value)
+
+    def _subtitle_shape(self) -> Optional[Shape]:
+        return next((d for d in self.shapes if d.is_subtitle), None)
 
     def add_chart(
         self,
@@ -485,10 +556,31 @@ class Slide:
             "index": self.index,
             "layout": self.layout,
             "title": self.title,
+            "subtitle": self.subtitle,
             "body": self.body,
             "notes": self.notes,
             "skipped": self.skipped,
-            "transition": {"effect": t.effect, "duration": t.duration, "delay": t.delay, "automatic": t.automatic},
+            "transition": {
+                "effect": t.effect,
+                "duration": t.duration,
+                "delay": t.delay,
+                "automatic": t.automatic,
+                "direction": t.direction,
+            },
+            "builds": [
+                {
+                    "target": b.target,
+                    "kind": b.kind,
+                    "effect": b.effect,
+                    "delivery": b.delivery,
+                    "duration": b.duration,
+                    "steps": b.steps,
+                    "start": b.start,
+                    "delay": b.delay,
+                    "direction": b.direction,
+                }
+                for b in self.builds
+            ],
             "drawables": [d.to_dict() for d in self.drawables],
             "images": [
                 {
@@ -809,8 +901,8 @@ class Presentation:
 
         Each slide is rebuilt on the new theme's layout with the same name,
         or the closest match (see :meth:`match_layout`), and keeps its title
-        and body text with indent levels, presenter notes, transition,
-        skipped flag, and builds on its title and body. ``layouts`` maps old
+        and body text with indent levels, subtitle, presenter notes,
+        transition, skipped flag, and builds on its title, subtitle and body. ``layouts`` maps old
         layout names to new ones where the default choice isn't wanted, e.g.
         ``{"Quote": "Statement"}``. Images, shapes, text boxes and text
         formatting that differs from the layout's own are not carried over.
@@ -837,17 +929,58 @@ class Presentation:
             new.notes = old.notes
             t = old.transition
             new.set_transition(t.effect_id, t.duration, t.delay, t.automatic)
+            old_a = old._slide.transition.attributes.animationAttributes
+            if old_a.HasField("direction"):
+                new._slide.transition.attributes.animationAttributes.direction = old_a.direction
             new.skipped = old.skipped
+            if old.subtitle is not None and new.title is not None:
+                new.add_subtitle(old.subtitle)
             for b in old.builds:
-                if b.target not in ("title", "body") or getattr(new, f"{b.target}_text") is None:
+                if b.target == "subtitle":
+                    if new.subtitle is None:
+                        continue
+                elif b.target not in ("title", "body") or getattr(new, f"{b.target}_text") is None:
                     continue
                 delivery = b.delivery.lower() if b.delivery.lower() in _builds._DELIVERY_NAMES else None
-                new.add_build(b.target, b.effect_id, delivery, b.duration, b.kind)
+                new.add_build(b.target, b.effect_id, delivery, b.duration, b.kind, b.start, b.delay, b.direction)
             new._touched()
         self.package = target.package
         self._show_id = target._show_id
         self._show = target._show
         self._prototypes = target._prototypes
+
+    def apply_style(
+        self,
+        transition: Union[None, str, dict] = None,
+        title_build: Union[None, str, dict] = None,
+        subtitle_build: Union[None, str, dict] = None,
+        body_build: Union[None, str, dict] = None,
+        slides: Optional[Iterable[int]] = None,
+    ) -> None:
+        """Give every slide (or those in ``slides``) the same transition and builds.
+
+        ``transition`` is an effect name or a dict of :meth:`Slide.set_transition`
+        arguments, e.g. ``{"effect": "wipe", "duration": 0.75}``. Each build is
+        an effect name or a dict of :meth:`Slide.add_build` arguments, e.g.
+        ``{"effect": "wipe", "start": "after previous", "delay": 0.1}``. A
+        slide's existing builds are replaced, and a build is left out where
+        the slide doesn't show that text or it is empty. Builds play title,
+        then subtitle, then body.
+        """
+        indexes = range(len(self)) if slides is None else [self._check_index(i) for i in slides]
+        chosen = [self[i] for i in indexes]
+        for slide in chosen:
+            if transition is not None:
+                args = {"effect": transition} if isinstance(transition, str) else dict(transition)
+                slide.set_transition(**args)
+            if title_build is None and subtitle_build is None and body_build is None:
+                continue
+            slide.clear_builds()
+            for target, build in (("title", title_build), ("subtitle", subtitle_build), ("body", body_build)):
+                if build is None or not (getattr(slide, target) or "").strip():
+                    continue
+                args = {"effect": build} if isinstance(build, str) else dict(build)
+                slide.add_build(target, **args)
 
     def _all_tables(self) -> List[Table]:
         return [t for s in self.slides for t in s.tables]

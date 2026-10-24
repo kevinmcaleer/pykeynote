@@ -95,17 +95,25 @@ def _print_info(info: Dict[str, Any]) -> None:
     _print_slides(info["slides"])
 
 
+def _words(value: Optional[str]) -> Optional[str]:
+    """``"after-previous"`` as the library spells it, ``"after previous"``."""
+    return None if value is None else value.replace("-", " ")
+
+
 def _print_slide(s: Dict[str, Any]) -> None:
     print(f"slide {s['index']}  layout: {s['layout']}{'  (skipped)' if s['skipped'] else ''}")
     if s["title"] is not None:
         print(f"title: {s['title']}")
+    if s.get("subtitle") is not None:
+        print(f"subtitle: {s['subtitle']}")
     if s["body"] is not None:
         print("body:")
         for p in s["paragraphs"]:
             print("  " + "  " * p["level"] + ("- " if p["bulleted"] else "") + p["text"])
     t = s["transition"]
     if t["effect"]:
-        print(f"transition: {t['effect']} {t['duration']:g}s")
+        direction = f" {t['direction']}" if t.get("direction") else ""
+        print(f"transition: {t['effect']} {t['duration']:g}s{direction}")
     for d in s["drawables"]:
         what = d.get("chart_type") or d.get("name") or (d.get("text") or "").split("\n")[0]
         print(f"{d['type']} (id {d['id']}): {what}  at {d['x']:g},{d['y']:g} size {d['width']:g}x{d['height']:g}")
@@ -121,7 +129,14 @@ def _print_slide(s: Dict[str, Any]) -> None:
         what = m["placeholder"] and f"placeholder {m['placeholder']}" or m["filename"] or ""
         print(f"{kind} (id {m['id']}): {what}  {m['duration']:g}s  at {x:g},{y:g} size {w:g}x{h:g}")
     for b in s["builds"]:
-        print(f"build: {b['target']} {b['kind']}, {b['effect']}, {b['delivery']}, {b['duration']:g}s")
+        extra = ""
+        if b["start"] != "on click":
+            extra += f", {b['start']}"
+        if b["delay"]:
+            extra += f", delay {b['delay']:g}s"
+        if b["direction"]:
+            extra += f", {b['direction']}"
+        print(f"build: {b['target']} {b['kind']}, {b['effect']}, {b['delivery']}, {b['duration']:g}s{extra}")
     if s["notes"]:
         print("notes:")
         for line in s["notes"].split("\n"):
@@ -144,7 +159,7 @@ def _run(args: argparse.Namespace) -> Any:
     if c == "edit":
         skipped = None if args.skip is None else args.skip == "yes"
         return tools.edit_slide(args.deck, args.index, args.title, _body(args.body), args.notes, skipped,
-                                args.transition, args.duration, args.output)
+                                args.transition, args.duration, _words(args.direction), args.subtitle, args.output)
     if c == "add":
         return tools.add_slide(args.deck, args.layout, args.title, _body(args.body), args.notes, args.at, args.output)
     if c == "delete":
@@ -160,7 +175,8 @@ def _run(args: argparse.Namespace) -> Any:
         if args.clear:
             return tools.clear_builds(args.deck, args.index, args.output)
         return tools.add_build(args.deck, args.index, _target(args.target), args.effect, args.delivery,
-                               args.duration, args.kind, args.output)
+                               args.duration, args.kind, _words(args.start), args.delay, _words(args.direction),
+                               args.output)
     if c == "image":
         if args.replace is not None:
             return tools.replace_image(args.deck, args.index, _target(args.replace), args.file, args.alt, args.output)
@@ -238,14 +254,17 @@ def parser() -> argparse.ArgumentParser:
     cp.add_argument("--aspect", default="16:9", choices=["16:9", "4:3"])
     cp.add_argument("-f", "--force", action="store_true", help="replace the file if it exists")
 
+    directions = ["from-left", "from-right", "from-top", "from-bottom"]
     body_help = "body text; repeat for more paragraphs, two leading spaces per indent level"
     cp = command("edit", "change a slide's title, body, notes, transition or skipping", index=True, writes=True)
     cp.add_argument("--title")
+    cp.add_argument("--subtitle", help="text under the title, in the theme's Subtitle style")
     cp.add_argument("--body", action="append", help=body_help)
     cp.add_argument("--notes")
     cp.add_argument("--skip", choices=["yes", "no"], help="skip the slide when playing")
-    cp.add_argument("--transition", help="e.g. dissolve, push, 'magic move' or none")
+    cp.add_argument("--transition", help="e.g. dissolve, wipe, push, 'magic move' or none")
     cp.add_argument("--duration", type=float, help="transition duration in seconds")
+    cp.add_argument("--direction", choices=directions, help="transition direction, e.g. for wipe")
 
     cp = command("add", "add a slide", writes=True)
     cp.add_argument("--layout", default="Title & Bullets", help="one of the deck's layouts (see info)")
@@ -266,11 +285,15 @@ def parser() -> argparse.ArgumentParser:
     cp.add_argument("--layout", action="append", metavar="OLD=NEW", help="use layout NEW for slides on OLD")
 
     cp = command("build", "add a build animation to a slide, or clear them", index=True, writes=True)
-    cp.add_argument("--target", default="body", help="title, body, or an object's id from 'show'")
-    cp.add_argument("--effect", default="dissolve", help="e.g. dissolve, 'move in'")
+    cp.add_argument("--target", default="body", help="title, subtitle, body, or an object's id from 'show'")
+    cp.add_argument("--effect", default="dissolve", help="e.g. dissolve, 'move in', wipe, 'fade and move'")
     cp.add_argument("--delivery", choices=["all at once", "by bullet"])
     cp.add_argument("--duration", type=float, default=1.0)
     cp.add_argument("--kind", default="in", choices=["in", "out"])
+    cp.add_argument("--start", default="on-click", choices=["on-click", "after-previous", "with-previous"],
+                    help="when the first step plays")
+    cp.add_argument("--delay", type=float, default=0.0, help="seconds to wait before the first step")
+    cp.add_argument("--direction", choices=directions, help="for effects that move, such as wipe")
     cp.add_argument("--clear", action="store_true", help="remove the slide's builds instead")
 
     def frame(cp: argparse.ArgumentParser) -> None:

@@ -7,8 +7,12 @@ A slide lists its builds in ``KN.SlideArchive.builds``, one
 name their build by a UUID, which is also recorded as the build's identity
 in the slide's component.
 
-The field values written here are the ones Keynote 14.5 writes for a
-default Dissolve or Move In build.
+The field values written here are the ones Keynote writes for a default
+Dissolve, Move In, Wipe or Fade and Move build. A chunk's ``automatic``,
+``referent`` and ``delay`` say when it starts: on a click (not automatic),
+after the step before (automatic, referent) or with it (automatic, not
+referent), ``delay`` seconds later. A direction, such as Wipe's Right to Left, is
+``animationAttributes.direction``, which slide transitions share.
 """
 
 from __future__ import annotations
@@ -36,8 +40,42 @@ _DELIVERY_NAMES = {
 }
 _KINDS = {"in": "In", "out": "Out"}
 
-Target = Union[str, int]
+# Friendly names for effects whose ids differ from the "apple:<name> character" pattern.
+EFFECT_ALIASES = {
+    "wipe": "apple:wipe",
+}
 
+# Keynote's direction values, shared by builds and transitions. Keynote leaves
+# the field out for an effect's default direction.
+DIRECTIONS = {
+    "from left": 11,
+    "from right": 12,
+    "from top": 13,
+    "from bottom": 14,
+}
+_DIRECTION_SYNONYMS = {
+    "left": "from left",
+    "left to right": "from left",
+    "right": "from right",
+    "right to left": "from right",
+    "top": "from top",
+    "top to bottom": "from top",
+    "bottom": "from bottom",
+    "bottom to top": "from bottom",
+}
+_DIRECTION_NAMES = {v: k for k, v in DIRECTIONS.items()}
+
+# Effects that take a direction, with the one Keynote uses when the field is left out.
+_DIRECTIONAL = {
+    "apple:wipe": "from left",
+    "apple:move in character": None,
+    "apple:move out character": None,
+    "apple:fade and move character": None,
+}
+
+STARTS = ("on click", "after previous", "with previous")
+
+Target = Union[str, int]
 
 @dataclass(frozen=True)
 class Build:
@@ -48,19 +86,60 @@ class Build:
     effect: str  # e.g. "dissolve", "move in"
     delivery: str  # Keynote's delivery name, e.g. "All at Once", "By Paragraph"
     duration: float
-    steps: int  # clicks this build takes
+    steps: int  # steps this build takes: one, or one per bullet
     effect_id: str  # Keynote's own effect id, e.g. "apple:dissolve character"
+    start: str = "on click"  # when its first step starts: "on click", "after previous" or "with previous"
+    delay: float = 0.0  # seconds its first step waits after it is due to start
+    direction: Optional[str] = None  # e.g. "from left", for effects that move; None if it has none or isn't known
 
 
 def _effect_id(name: str) -> str:
     if ":" in name:
         return name
-    return "apple:" + name.strip().lower().replace("_", " ").replace("-", " ") + " character"
+    key = " ".join(name.strip().lower().replace("_", " ").replace("-", " ").split())
+    return EFFECT_ALIASES.get(key, "apple:" + key + " character")
 
 
 def _effect_name(effect_id: str) -> str:
     name = effect_id.split(":", 1)[-1]
     return name[: -len(" character")] if name.endswith(" character") else name
+
+
+def direction_value(direction: str) -> int:
+    """Keynote's number for a direction such as ``"from left"`` (also ``"left to right"``, ``"from-left"``)."""
+    key = " ".join(direction.strip().lower().replace("_", " ").replace("-", " ").split())
+    key = _DIRECTION_SYNONYMS.get(key, key)
+    if key not in DIRECTIONS:
+        raise ValueError(f"direction must be one of {', '.join(DIRECTIONS)}, not {direction!r}")
+    return DIRECTIONS[key]
+
+
+def direction_name(value: int, default: Optional[str] = None) -> Optional[str]:
+    """The name of a stored direction value; ``default`` when Keynote left it out (0)."""
+    if not value:
+        return default
+    return _DIRECTION_NAMES.get(value, str(value))
+
+
+def _set_direction(animation: Any, effect_id: str, direction: Optional[str], directional: dict, what: str) -> None:
+    animation.ClearField("direction")
+    if direction is None:
+        return
+    if effect_id not in directional and effect_id.startswith("apple:"):
+        known = ", ".join(sorted(_effect_name(e) for e in directional))
+        raise ValueError(f"the {_effect_name(effect_id)!r} {what} has no direction; effects with one: {known}")
+    value = direction_value(direction)
+    if direction_name(value) != directional.get(effect_id):
+        animation.direction = value
+
+
+def _target_from_ref(slide: "Slide", drawable_id: int) -> Union[str, int]:
+    name = _target_name(slide, drawable_id)
+    if name == drawable_id:
+        shape = slide._subtitle_shape()
+        if shape is not None and shape.identifier == drawable_id:
+            return "subtitle"
+    return name
 
 
 def _target_name(slide: "Slide", drawable_id: int) -> Union[str, int]:
@@ -77,33 +156,59 @@ def read_builds(slide: "Slide") -> List[Build]:
     # Play order is the order of the chunks. Keynote doesn't keep
     # ``builds`` in that order when it saves, so sort by each build's first chunk.
     steps: dict = {}
+    first_chunk: dict = {}
     for ref in slide._slide.buildChunks:
-        build_id = p.deref(ref).build.identifier
+        chunk = p.deref(ref)
+        build_id = chunk.build.identifier
         steps[build_id] = steps.get(build_id, 0) + 1
+        first_chunk.setdefault(build_id, chunk)
     first = {build_id: i for i, build_id in enumerate(steps)}
     refs = sorted(slide._slide.builds, key=lambda r: first.get(r.identifier, len(first)))
     out = []
     for ref in refs:
         b = p.deref(ref)
         a = b.attributes.animationAttributes
+        chunk = first_chunk.get(ref.identifier)
         out.append(
             Build(
-                target=_target_name(slide, b.drawable.identifier),
+                target=_target_from_ref(slide, b.drawable.identifier),
                 kind=a.animation_type.lower(),
                 effect=_effect_name(a.effect),
                 delivery=b.delivery,
                 duration=a.duration,
                 steps=steps.get(ref.identifier, 0),
                 effect_id=a.effect,
+                start=_start_of(chunk),
+                delay=round(chunk.delay, 6) if chunk is not None else 0.0,
+                direction=direction_name(a.direction, _DIRECTIONAL.get(a.effect)),
             )
         )
     return out
+
+
+def _start_of(chunk: Any) -> str:
+    if chunk is None or not chunk.automatic:
+        return "on click"
+    return "after previous" if chunk.referent else "with previous"
+
+
+def _start_name(start: str) -> str:
+    key = " ".join(start.strip().lower().replace("_", " ").replace("-", " ").split())
+    key = {"click": "on click", "after": "after previous", "with": "with previous"}.get(key, key)
+    if key not in STARTS:
+        raise ValueError(f"start must be one of {', '.join(STARTS)}, not {start!r}")
+    return key
 
 
 def _resolve_target(slide: "Slide", target: Target) -> int:
     s = slide._slide
     shown = {r.identifier for r in s.drawables_z_order}
     target = getattr(target, "identifier", target)  # a Shape, Table or Chart
+    if target == "subtitle":
+        shape = slide._subtitle_shape()
+        if shape is None or shape.identifier not in shown:
+            raise ValueError(f"slide {slide.index} has no subtitle; add one with add_subtitle()")
+        return shape.identifier
     if target in ("title", "body"):
         field = "titlePlaceholder" if target == "title" else "bodyPlaceholder"
         if not s.HasField(field) or getattr(s, field).identifier not in shown:
@@ -111,7 +216,7 @@ def _resolve_target(slide: "Slide", target: Target) -> int:
         return getattr(s, field).identifier
     if isinstance(target, int) and target in shown:
         return target
-    raise ValueError(f"build target must be 'title', 'body' or a drawable on the slide, not {target!r}")
+    raise ValueError(f"build target must be 'title', 'subtitle', 'body' or a drawable on the slide, not {target!r}")
 
 
 def _header(identifier: int, message_type: int) -> Any:
@@ -132,6 +237,9 @@ def add_build(
     delivery: Optional[str] = None,
     duration: float = 1.0,
     kind: str = "in",
+    start: str = "on click",
+    delay: float = 0.0,
+    direction: Optional[str] = None,
 ) -> Build:
     p = slide._package
     s = slide._slide
@@ -139,6 +247,10 @@ def add_build(
     target = drawable_id if not isinstance(target, str) else target
     if kind not in _KINDS:
         raise ValueError(f"kind must be 'in' or 'out', not {kind!r}")
+    start = _start_name(start)
+    if delay < 0:
+        raise ValueError("delay can't be negative")
+    effect_id = _effect_id(effect)
     is_body = target == "body"
     if delivery is None:
         delivery = "by paragraph" if is_body and len(slide.paragraphs) > 1 else "all at once"
@@ -148,7 +260,7 @@ def add_build(
     steps = 1
     if delivery_name == "By Paragraph":
         if target not in ("title", "body"):
-            raise ValueError("only text placeholders can be built by paragraph")
+            raise ValueError("only the title and body can be built by bullet")
         text = slide.body_text if is_body else slide.title_text
         steps = max(1, len([para for para in text.paragraphs if para.text.strip()]))
 
@@ -168,17 +280,13 @@ def add_build(
     attrs.ChartRotation3D = 60.0
     a = attrs.animationAttributes
     a.animation_type = _KINDS[kind]
-    a.effect = _effect_id(effect)
+    a.effect = effect_id
     a.duration = float(duration)
+    _set_direction(a, effect_id, direction, _DIRECTIONAL, "build")
     a.delay = 0.0
     a.random_number_seed = random.randrange(1, 2**31)
     a.writing_direction_is_rtl = False
-    attrs.custom_textDelivery = attrs.kTextDeliveryByObject
-    attrs.custom_deliveryOption = attrs.kDeliveryOptionForward
-    if a.effect == "apple:move in character":
-        # Keynote's defaults for Move In.
-        attrs.custom_bounce = True
-        attrs.custom_deliveryOption = attrs.kDeliveryOptionBackward
+    _set_custom_defaults(attrs, effect_id)
     p.add_segment(slide_file, IWAArchiveSegment(_header(build_id, _BUILD_TYPE), [build]))
     entry = component.object_uuid_map_entries.add()
     entry.identifier = build_id
@@ -190,10 +298,12 @@ def add_build(
         chunk_id = p.new_identifier()
         chunk = classes["KN.BuildChunkArchive"]()
         chunk.build.identifier = build_id
-        chunk.delay = 0.0
+        # As Keynote does, every step of the build starts the same way, and
+        # the delay is the first step's.
+        chunk.delay = float(delay) if step == 1 else 0.0
         chunk.duration = float(duration)
-        chunk.automatic = False
-        chunk.referent = True
+        chunk.automatic = start != "on click"
+        chunk.referent = start != "with previous"
         chunk.build_chunk_identifier.build_id.lower = lower
         chunk.build_chunk_identifier.build_id.upper = upper
         chunk.build_chunk_identifier.build_chunk_id = step
@@ -204,6 +314,20 @@ def add_build(
 
     _builds_changed(slide)
     return read_builds(slide)[-1]
+
+
+def _set_custom_defaults(attrs: Any, effect_id: str) -> None:
+    """The effect-specific options Keynote writes for a new build of this effect."""
+    if effect_id == "apple:wipe":
+        return  # Keynote writes no text delivery or delivery option for Wipe
+    attrs.custom_textDelivery = attrs.kTextDeliveryByObject
+    attrs.custom_deliveryOption = attrs.kDeliveryOptionForward
+    if effect_id == "apple:move in character":
+        attrs.custom_bounce = True
+        attrs.custom_deliveryOption = attrs.kDeliveryOptionBackward
+    elif effect_id == "apple:fade and move character":
+        attrs.custom_deliveryOption = attrs.kDeliveryOptionBackward
+        attrs.custom_travel_distance = 1.0
 
 
 def clear_builds(slide: "Slide") -> None:

@@ -16,6 +16,9 @@ test("read builds from a Keynote file", async () => {
     duration: 1.0,
     steps: 3,
     effectId: "apple:dissolve character",
+    start: "on click",
+    delay: 0,
+    direction: null,
   });
   assert.equal(typeof shape.target, "number");
   assert.deepEqual([shape.effect, shape.delivery, shape.steps], ["move in", "All at Once", 1]);

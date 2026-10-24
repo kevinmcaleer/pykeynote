@@ -10,14 +10,27 @@ export {
   themes,
   type AddShapeOptions,
   type AddSlideOptions,
+  type ApplyStyleOptions,
   type ApplyThemeOptions,
   type Aspect,
   type CreateOptions,
   type FrameOptions,
+  type StyleBuild,
+  type StyleTransition,
   type Transition,
   type TransitionOptions,
 } from "./document.js";
-export { DELIVERY_NAMES, type Build, type BuildOptions, type BuildTarget } from "./builds.js";
+export {
+  DELIVERY_NAMES,
+  DIRECTIONS,
+  EFFECT_ALIASES,
+  STARTS,
+  type Build,
+  type BuildOptions,
+  type BuildTarget,
+  type Direction,
+  type Start,
+} from "./builds.js";
 export { CHART_TYPES, Chart, type AddChartOptions, type ChartType } from "./charts.js";
 export { Drawable, SHAPE_KINDS, Shape, parseColor, type Color, type DrawableJSON, type ShapeKind } from "./drawables.js";
 export { imageFormat, type AddImageOptions, type Image, type ImageSource, type ImageTarget } from "./media.js";

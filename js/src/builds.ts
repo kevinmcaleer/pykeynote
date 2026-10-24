@@ -8,8 +8,12 @@
  * name their build by a UUID, which is also recorded as the build's identity
  * in the slide's component.
  *
- * The field values written here are the ones Keynote 14.5 writes for a
- * default Dissolve or Move In build.
+ * The field values written here are the ones Keynote writes for a default
+ * Dissolve, Move In, Wipe or Fade and Move build. A chunk's ``automatic``,
+ * ``referent`` and ``delay`` say when it starts: on a click (not automatic),
+ * after the step before (automatic, referent) or with it (automatic, not
+ * referent), ``delay`` seconds later. A direction, such as Wipe's Right to Left, is
+ * ``animationAttributes.direction``, which slide transitions share.
  */
 
 import type { Slide } from "./document.js";
@@ -30,24 +34,65 @@ export const DELIVERY_NAMES: Record<string, string> = {
 const KINDS: Record<string, string> = { in: "In", out: "Out" };
 const ATTRS = "KN.BuildAttributesArchive.BuildAttributes";
 
+/** Friendly names for effects whose ids differ from the ``"apple:<name> character"`` pattern. */
+export const EFFECT_ALIASES: Record<string, string> = {
+  wipe: "apple:wipe",
+};
+
+/** Keynote's direction values, shared by builds and transitions. Keynote leaves the field out for an effect's default direction. */
+export const DIRECTIONS = {
+  "from left": 11,
+  "from right": 12,
+  "from top": 13,
+  "from bottom": 14,
+} as const;
+export type Direction = keyof typeof DIRECTIONS;
+const DIRECTION_SYNONYMS: Record<string, Direction> = {
+  left: "from left",
+  "left to right": "from left",
+  right: "from right",
+  "right to left": "from right",
+  top: "from top",
+  "top to bottom": "from top",
+  bottom: "from bottom",
+  "bottom to top": "from bottom",
+};
+
+/** Effects that take a direction, with the one Keynote uses when the field is left out. */
+const DIRECTIONAL: Record<string, Direction | null> = {
+  "apple:wipe": "from left",
+  "apple:move in character": null,
+  "apple:move out character": null,
+  "apple:fade and move character": null,
+};
+
+export const STARTS = ["on click", "after previous", "with previous"] as const;
+export type Start = (typeof STARTS)[number];
+
 /** One build on a slide. */
 export interface Build {
   /** ``"title"``, ``"body"``, or the identifier of another drawable. */
-  target: "title" | "body" | number;
+  target: "title" | "subtitle" | "body" | number;
   kind: "in" | "out";
   /** e.g. ``"dissolve"``, ``"move in"``. */
   effect: string;
   /** Keynote's delivery name, e.g. ``"All at Once"``, ``"By Paragraph"``. */
   delivery: string;
   duration: number;
-  /** Clicks this build takes. */
+  /** Steps this build takes: one, or one per bullet. */
   steps: number;
   /** Keynote's own effect id, e.g. ``"apple:dissolve character"``. */
   effectId: string;
+  /** When its first step starts. */
+  start: Start;
+  /** Seconds its first step waits after it is due to start. */
+  delay: number;
+  /** e.g. ``"from left"``, for effects that move; ``null`` if it has none or isn't known. */
+  direction: string | null;
 }
 
-/** What to build: ``"title"``, ``"body"``, a drawable (shape, image, table or chart) or its identifier. */
-export type BuildTarget = "title" | "body" | number | { identifier: number };
+/** What to build: ``"title"``, ``"subtitle"``, ``"body"``, a drawable (shape, image, table or chart) or its identifier. */
+export type BuildTarget = "title" | "subtitle" | "body" | number | { identifier: number };
 
 export interface BuildOptions {
   /** A build effect such as ``"dissolve"`` or ``"move in"``, or Keynote's id such as ``"apple:dissolve character"``. Defaults to dissolve. */
@@ -58,11 +103,71 @@ export interface BuildOptions {
   duration?: number;
   /** ``"in"`` (the default) or ``"out"``. */
   kind?: "in" | "out";
+  /** When it plays: ``"on click"`` (the default), or by itself ``"after previous"`` or ``"with previous"`` step. As in Keynote, every bullet starts this way. */
+  start?: Start | string;
+  /** Seconds the first step waits. Defaults to 0. */
+  delay?: number;
+  /** ``"from left"``, ``"from right"``, ``"from top"`` or ``"from bottom"``, for effects that move. */
+  direction?: Direction | string;
+}
+
+function words(name: string): string {
+  return name.trim().toLowerCase().replace(/[_-]/g, " ").split(/\s+/).join(" ");
 }
 
 function effectIdOf(name: string): string {
   if (name.includes(":")) return name;
-  return "apple:" + name.trim().toLowerCase().replace(/[_-]/g, " ") + " character";
+  const key = words(name);
+  return EFFECT_ALIASES[key] ?? "apple:" + key + " character";
+}
+
+/** Keynote's number for a direction such as ``"from left"`` (also ``"left to right"``, ``"from-left"``). */
+export function directionValue(direction: string): number {
+  let key = words(direction);
+  key = DIRECTION_SYNONYMS[key] ?? key;
+  if (!(key in DIRECTIONS)) {
+    throw new Error(`direction must be one of ${Object.keys(DIRECTIONS).join(", ")}, not ${JSON.stringify(direction)}`);
+  }
+  return DIRECTIONS[key as Direction];
+}
+
+/** The name of a stored direction value; ``fallback`` when Keynote left it out (0). */
+export function directionName(value: number | undefined, fallback: string | null = null): string | null {
+  if (!value) return fallback;
+  const found = Object.entries(DIRECTIONS).find(([, v]) => v === value);
+  return found ? found[0] : String(value);
+}
+
+/** @internal Set or clear ``animation.direction``, checking that the effect has one. */
+export function setDirection(
+  animation: Message,
+  effectId: string,
+  direction: string | null | undefined,
+  directional: Record<string, string | null>,
+  what: string,
+): void {
+  clear(animation, "direction");
+  if (direction == null) return;
+  if (!(effectId in directional) && effectId.startsWith("apple:")) {
+    const known = Object.keys(directional).map(effectNameOf).sort().join(", ");
+    throw new Error(`the "${effectNameOf(effectId)}" ${what} has no direction; effects with one: ${known}`);
+  }
+  const value = directionValue(direction);
+  if (directionName(value) !== directional[effectId]) animation.direction = value;
+}
+
+function startName(start: string): Start {
+  let key = words(start);
+  key = ({ click: "on click", after: "after previous", with: "with previous" } as Record<string, string>)[key] ?? key;
+  if (!(STARTS as readonly string[]).includes(key)) {
+    throw new Error(`start must be one of ${STARTS.join(", ")}, not ${JSON.stringify(start)}`);
+  }
+  return key as Start;
+}
+
+function startOf(chunk: Message | undefined): Start {
+  if (chunk === undefined || !chunk.automatic) return "on click";
+  return chunk.referent ? "after previous" : "with previous";
 }
 
 function effectNameOf(effectId: string): string {
@@ -70,10 +175,11 @@ function effectNameOf(effectId: string): string {
   return name.endsWith(" character") ? name.slice(0, -" character".length) : name;
 }
 
-function targetName(slide: Slide, drawableId: number): "title" | "body" | number {
+function targetName(slide: Slide, drawableId: number): "title" | "subtitle" | "body" | number {
   const s = slide.slide;
   if (has(s, "titlePlaceholder") && s.titlePlaceholder.identifier === drawableId) return "title";
   if (has(s, "bodyPlaceholder") && s.bodyPlaceholder.identifier === drawableId) return "body";
+  if (slide.subtitleShape()?.identifier === drawableId) return "subtitle";
   return drawableId;
 }
 
@@ -82,9 +188,12 @@ export function readBuilds(slide: Slide): Build[] {
   // Play order is the order of the chunks. Keynote doesn't keep ``builds``
   // in that order when it saves, so sort by each build's first chunk.
   const steps = new Map<number, number>();
+  const firstChunk = new Map<number, Message>();
   for (const ref of slide.slide.buildChunks as Message[]) {
-    const buildId: number = p.deref(ref).build.identifier;
+    const chunk = p.deref(ref);
+    const buildId: number = chunk.build.identifier;
     steps.set(buildId, (steps.get(buildId) ?? 0) + 1);
+    if (!firstChunk.has(buildId)) firstChunk.set(buildId, chunk);
   }
   const first = new Map([...steps.keys()].map((id, i) => [id, i]));
   const refs = [...(slide.slide.builds as Message[])].sort(
@@ -93,6 +202,7 @@ export function readBuilds(slide: Slide): Build[] {
   return refs.map((ref) => {
     const b = p.deref(ref);
     const a = sub(sub(b, "attributes"), "animationAttributes");
+    const chunk = firstChunk.get(ref.identifier);
     return {
       target: targetName(slide, b.drawable.identifier),
       kind: a.animation_type.toLowerCase(),
@@ -101,6 +211,9 @@ export function readBuilds(slide: Slide): Build[] {
       duration: a.duration,
       steps: steps.get(ref.identifier) ?? 0,
       effectId: a.effect,
+      start: startOf(chunk),
+      delay: chunk ? Math.round((chunk.delay ?? 0) * 1e6) / 1e6 : 0,
+      direction: directionName(a.direction, DIRECTIONAL[a.effect] ?? null),
     };
   });
 }
@@ -108,6 +221,13 @@ export function readBuilds(slide: Slide): Build[] {
 function resolveTarget(slide: Slide, target: BuildTarget): number {
   const s = slide.slide;
   const shown = new Set((s.drawables_z_order as Message[]).map((r) => r.identifier));
+  if (target === "subtitle") {
+    const shape = slide.subtitleShape();
+    if (shape === null || !shown.has(shape.identifier)) {
+      throw new Error(`slide ${slide.index} has no subtitle; add one with addSubtitle()`);
+    }
+    return shape.identifier;
+  }
   if (target === "title" || target === "body") {
     const field = target === "title" ? "titlePlaceholder" : "bodyPlaceholder";
     if (!has(s, field) || !shown.has(s[field].identifier)) {
@@ -117,7 +237,7 @@ function resolveTarget(slide: Slide, target: BuildTarget): number {
   }
   const id = typeof target === "object" && target !== null ? target.identifier : target;
   if (typeof id === "number" && shown.has(id)) return id;
-  throw new Error(`build target must be "title", "body" or a drawable on the slide, not ${JSON.stringify(target)}`);
+  throw new Error(`build target must be "title", "subtitle", "body" or a drawable on the slide, not ${JSON.stringify(target)}`);
 }
 
 export function addBuild(slide: Slide, target: BuildTarget = "body", options: BuildOptions = {}): Build {
@@ -127,6 +247,9 @@ export function addBuild(slide: Slide, target: BuildTarget = "body", options: Bu
   const kind = options.kind ?? "in";
   const duration = options.duration ?? 1.0;
   if (!(kind in KINDS)) throw new Error(`kind must be "in" or "out", not ${JSON.stringify(kind)}`);
+  const start = startName(options.start ?? "on click");
+  const delay = Number(options.delay ?? 0);
+  if (delay < 0) throw new Error("delay can't be negative");
   const isText = target === "title" || target === "body";
   const isBody = target === "body";
   let delivery = options.delivery;
@@ -137,7 +260,7 @@ export function addBuild(slide: Slide, target: BuildTarget = "body", options: Bu
   }
   let steps = 1;
   if (deliveryName === "By Paragraph") {
-    if (!isText) throw new Error("only text placeholders can be built by paragraph");
+    if (!isText) throw new Error("only the title and body can be built by bullet");
     const text = isBody ? slide.bodyText! : slide.titleText!;
     steps = Math.max(1, text.paragraphs.filter((para) => para.text.trim()).length);
   }
@@ -158,18 +281,13 @@ export function addBuild(slide: Slide, target: BuildTarget = "body", options: Bu
     random_number_seed: 1 + Math.floor(Math.random() * (2 ** 31 - 1)),
     writing_direction_is_rtl: false,
   });
+  setDirection(a, effect, options.direction, DIRECTIONAL, "build");
   const attrs = create("KN.BuildAttributesArchive", {
     eventTrigger: 1,
     ChartRotation3D: 60.0,
     animationAttributes: a,
-    custom_textDelivery: enumValue(`${ATTRS}TextDelivery`, "kTextDeliveryByObject"),
-    custom_deliveryOption: enumValue(`${ATTRS}DeliveryOption`, "kDeliveryOptionForward"),
   });
-  if (effect === "apple:move in character") {
-    // Keynote's defaults for Move In.
-    attrs.custom_bounce = true;
-    attrs.custom_deliveryOption = enumValue(`${ATTRS}DeliveryOption`, "kDeliveryOptionBackward");
-  }
+  setCustomDefaults(attrs, effect);
   const build = create("KN.BuildArchive", {
     drawable: create("TSP.Reference", { identifier: drawableId }),
     delivery: deliveryName,
@@ -188,10 +306,11 @@ export function addBuild(slide: Slide, target: BuildTarget = "body", options: Bu
     const chunkId = p.newIdentifier();
     const chunk = create("KN.BuildChunkArchive", {
       build: create("TSP.Reference", { identifier: buildId }),
-      delay: 0.0,
+      // As Keynote does, every step of the build starts the same way, and the delay is the first step's.
+      delay: step === 1 ? delay : 0.0,
       duration: Number(duration),
-      automatic: false,
-      referent: true,
+      automatic: start !== "on click",
+      referent: start !== "with previous",
       build_chunk_identifier: create("KN.BuildChunkIdentifierArchive", {
         build_id: create("TSP.UUID", { lower, upper }),
         build_chunk_id: step,
@@ -206,6 +325,20 @@ export function addBuild(slide: Slide, target: BuildTarget = "body", options: Bu
   buildsChanged(slide);
   const all = readBuilds(slide);
   return all[all.length - 1];
+}
+
+/** The effect-specific options Keynote writes for a new build of this effect. */
+function setCustomDefaults(attrs: Message, effectId: string): void {
+  if (effectId === "apple:wipe") return; // Keynote writes no text delivery or delivery option for Wipe
+  attrs.custom_textDelivery = enumValue(`${ATTRS}TextDelivery`, "kTextDeliveryByObject");
+  attrs.custom_deliveryOption = enumValue(`${ATTRS}DeliveryOption`, "kDeliveryOptionForward");
+  if (effectId === "apple:move in character") {
+    attrs.custom_bounce = true;
+    attrs.custom_deliveryOption = enumValue(`${ATTRS}DeliveryOption`, "kDeliveryOptionBackward");
+  } else if (effectId === "apple:fade and move character") {
+    attrs.custom_deliveryOption = enumValue(`${ATTRS}DeliveryOption`, "kDeliveryOptionBackward");
+    attrs.custom_travel_distance = 1.0;
+  }
 }
 
 function removeIds(slide: Slide, gone: Set<number>): void {

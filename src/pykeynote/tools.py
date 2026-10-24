@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from typing import Any, Callable, Dict, List, Optional, Union
 
+from .builds import DIRECTIONS, STARTS
 from .charts import CHART_TYPES
 from .document import Presentation, Slide, themes
 from .drawables import SHAPE_KINDS
@@ -71,11 +72,6 @@ def slide_detail(slide: Slide) -> Dict[str, Any]:
     for m, entry in zip(slide.movies, out["movies"]):
         entry["id"] = m.identifier
     out["paragraphs"] = [{"text": p.text, "level": p.level, "bulleted": p.bulleted} for p in slide.paragraphs]
-    out["builds"] = [
-        {"target": b.target, "kind": b.kind, "effect": b.effect, "delivery": b.delivery,
-         "duration": b.duration, "steps": b.steps}
-        for b in slide.builds
-    ]
     return out
 
 
@@ -144,12 +140,16 @@ def edit_slide(
     skipped: Optional[bool] = None,
     transition: Optional[str] = None,
     transition_duration: Optional[float] = None,
+    transition_direction: Optional[str] = None,
+    subtitle: Optional[str] = None,
     output: Optional[str] = None,
 ) -> Dict[str, Any]:
     deck = _open(path)
     slide = deck[deck._check_index(index)]
     if title is not None:
         slide.title = title
+    if subtitle is not None:
+        slide.subtitle = subtitle
     if body is not None:
         slide.body = _paragraphs(body)
     if notes is not None:
@@ -157,7 +157,13 @@ def edit_slide(
     if skipped is not None:
         slide.skipped = skipped
     if transition is not None:
-        slide.set_transition(None if transition.lower() == "none" else transition, transition_duration)
+        slide.set_transition(None if transition.lower() == "none" else transition, transition_duration,
+                             direction=transition_direction)
+    elif transition_direction is not None or transition_duration is not None:
+        t = slide.transition  # change the current transition's duration or direction
+        if t.effect is None:
+            raise ValueError(f"slide {index} has no transition; give one as well")
+        slide.set_transition(t.effect_id, transition_duration, direction=transition_direction or t.direction)
     _save(deck, output)
     return slide_detail(slide)
 
@@ -219,13 +225,31 @@ def add_build(
     delivery: Optional[str] = None,
     duration: float = 1.0,
     kind: str = "in",
+    start: str = "on click",
+    delay: float = 0.0,
+    direction: Optional[str] = None,
     output: Optional[str] = None,
 ) -> Dict[str, Any]:
     deck = _open(path)
     slide = deck[deck._check_index(index)]
-    slide.add_build(target, effect, delivery, duration, kind)
+    slide.add_build(target, effect, delivery, duration, kind, start, delay, direction)
     _save(deck, output)
     return slide_detail(slide)
+
+
+def apply_style(
+    path: str,
+    transition: Union[None, str, Dict[str, Any]] = None,
+    title_build: Union[None, str, Dict[str, Any]] = None,
+    subtitle_build: Union[None, str, Dict[str, Any]] = None,
+    body_build: Union[None, str, Dict[str, Any]] = None,
+    slides: Optional[List[int]] = None,
+    output: Optional[str] = None,
+) -> Dict[str, Any]:
+    deck = _open(path)
+    deck.apply_style(transition, title_build, subtitle_build, body_build, slides)
+    _save(deck, output)
+    return {"slides": [slide_detail(s) for s in deck]}
 
 
 def clear_builds(path: str, index: int, output: Optional[str] = None) -> Dict[str, Any]:
@@ -444,6 +468,32 @@ def delete_drawable(path: str, index: int, drawable: int, output: Optional[str] 
 
 _PATH = {"type": "string", "description": "Absolute path to a Keynote .key file (~ is allowed)"}
 _INDEX = {"type": "integer", "description": "Slide index, from 0; negative counts from the end"}
+def _schema(properties: Dict[str, Any], required: List[str]) -> Dict[str, Any]:
+    return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
+
+
+_DIRECTION = {"type": "string", "enum": list(DIRECTIONS), "description": "For effects that move, such as wipe"}
+_TRANSITION_SPEC = _schema(
+    {"effect": {"type": "string"}, "duration": {"type": "number"}, "direction": _DIRECTION}, ["effect"]
+)
+_BUILD_SPEC = {
+    "description": "An effect name, or the add_build options for it",
+    "anyOf": [
+        {"type": "string"},
+        _schema(
+            {
+                "effect": {"type": "string", "description": "e.g. wipe, fade and move, dissolve, move in"},
+                "delivery": {"type": "string", "enum": ["all at once", "by bullet"]},
+                "duration": {"type": "number"},
+                "kind": {"type": "string", "enum": ["in", "out"]},
+                "start": {"type": "string", "enum": list(STARTS)},
+                "delay": {"type": "number"},
+                "direction": _DIRECTION,
+            },
+            ["effect"],
+        ),
+    ],
+}
 _OUTPUT = {"type": "string", "description": "Save to this .key path instead of changing the file in place"}
 _BODY = {
     "description": (
@@ -476,13 +526,11 @@ _MARKDOWN_FORMAT = (
     "# heading for its title, then bullets (- item, indent two spaces per level) "
     "or plain paragraphs. Optional settings go in HTML comments before the "
     "heading: <!-- layout: Title & Bullets -->, <!-- transition: dissolve 1.5s -->, "
-    "<!-- build: body, dissolve, by bullet, 1s -->, <!-- skipped: true -->. "
+    "<!-- build: body, dissolve, by bullet, 1s -->, <!-- skipped: true -->; builds can also take a "
+    "start (after previous), a delay (delay 0.1s) and a direction (from left), and a ## heading under "
+    "the # title is a subtitle. "
     "Presenter notes follow a line holding only ???."
 )
-
-
-def _schema(properties: Dict[str, Any], required: List[str]) -> Dict[str, Any]:
-    return {"type": "object", "properties": properties, "required": required, "additionalProperties": False}
 
 
 TOOLS: List[Dict[str, Any]] = [
@@ -547,7 +595,7 @@ TOOLS: List[Dict[str, Any]] = [
         "name": "edit_slide",
         "function": edit_slide,
         "description": (
-            "Change a slide's title, body, presenter notes, skipped flag or "
+            "Change a slide's title, subtitle, body, presenter notes, skipped flag or "
             "transition, keeping the theme's formatting. Fields left out stay "
             "as they are. Saves the deck."
         ),
@@ -556,11 +604,13 @@ TOOLS: List[Dict[str, Any]] = [
                 "path": _PATH,
                 "index": _INDEX,
                 "title": {"type": "string"},
+                "subtitle": {"type": "string", "description": "Text under the title, in the theme's Subtitle style"},
                 "body": _BODY,
                 "notes": {"type": "string"},
                 "skipped": {"type": "boolean"},
-                "transition": {"type": "string", "description": "e.g. dissolve, push, magic move, or none"},
+                "transition": {"type": "string", "description": "e.g. dissolve, wipe, push, magic move, or none"},
                 "transition_duration": {"type": "number", "description": "Seconds"},
+                "transition_direction": _DIRECTION,
                 "output": _OUTPUT,
             },
             ["path", "index"],
@@ -636,25 +686,57 @@ TOOLS: List[Dict[str, Any]] = [
         "name": "add_build",
         "function": add_build,
         "description": (
-            "Add a build animation to a slide's title, body or another object on it. Each build plays "
-            "after the existing ones, one click per step. Saves the deck."
+            "Add a build animation to a slide's title, subtitle, body or another object on it. Each "
+            "build plays after the existing ones: on a click, or by itself after or "
+            "with the step before (start); every bullet of it starts that way. Saves the deck."
         ),
         "inputSchema": _schema(
             {
                 "path": _PATH,
                 "index": _INDEX,
                 "target": {
-                    "description": "title, body, or the id of a shape, text box, table, chart or image (see read_slide)",
-                    "anyOf": [{"type": "string", "enum": ["title", "body"]}, {"type": "integer"}],
+                    "description": "title, subtitle, body, or the id of a shape, text box, table, chart or image (see read_slide)",
+                    "anyOf": [{"type": "string", "enum": ["title", "subtitle", "body"]}, {"type": "integer"}],
                     "default": "body",
                 },
-                "effect": {"type": "string", "description": "e.g. dissolve, move in", "default": "dissolve"},
+                "effect": {
+                    "type": "string",
+                    "description": "e.g. dissolve, move in, wipe, fade and move",
+                    "default": "dissolve",
+                },
                 "delivery": {"type": "string", "enum": ["all at once", "by bullet"]},
                 "duration": {"type": "number", "default": 1.0},
                 "kind": {"type": "string", "enum": ["in", "out"], "default": "in"},
+                "start": {"type": "string", "enum": list(STARTS), "default": "on click"},
+                "delay": {"type": "number", "description": "Seconds to wait before the first step", "default": 0.0},
+                "direction": _DIRECTION,
                 "output": _OUTPUT,
             },
             ["path", "index"],
+        ),
+    },
+    {
+        "name": "apply_style",
+        "function": apply_style,
+        "description": (
+            "Give every slide (or the listed ones) the same transition and title, subtitle and body "
+            "builds, replacing their builds. A build is left out where a slide doesn't show that text. "
+            "Builds play title, then subtitle, then body. Saves the deck."
+        ),
+        "inputSchema": _schema(
+            {
+                "path": _PATH,
+                "transition": {
+                    "description": "An effect name, or {effect, duration, direction}",
+                    "anyOf": [{"type": "string"}, _TRANSITION_SPEC],
+                },
+                "title_build": _BUILD_SPEC,
+                "subtitle_build": _BUILD_SPEC,
+                "body_build": _BUILD_SPEC,
+                "slides": {"type": "array", "items": {"type": "integer"}, "description": "Default: every slide"},
+                "output": _OUTPUT,
+            },
+            ["path"],
         ),
     },
     {

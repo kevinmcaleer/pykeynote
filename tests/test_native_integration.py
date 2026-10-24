@@ -167,6 +167,29 @@ def test_builds_survive_keynote(tmp_path, open_in_keynote):
     ]
 
 
+def test_broll_style_survives_keynote(tmp_path, open_in_keynote):
+    # Title Wipe on click, subtitle Wipe after it with a delay, bullets Fade and Move, Wipe transition.
+    deck = Presentation.new()
+    s = deck.add_slide("Title & Bullets", title="test", body=["some text", "more points", "last bits"])
+    s.add_subtitle("sub title")
+    s.set_transition("wipe", 0.75, direction="from right")
+    s.add_build("title", "wipe", direction="from left")
+    s.add_build("subtitle", "wipe", direction="from top", start="after previous", delay=0.1)
+    s.add_build("body", "fade and move", delivery="by bullet", duration=0.3)
+    deck.add_slide("Title Only", title="next")
+    out = tmp_path / "style.key"
+    deck.save(out)
+    before = deck[0].to_dict()
+
+    live = open_in_keynote(out)
+    resaved = tmp_path / "style-resaved.key"
+    live.save(resaved)
+    after = Presentation.open(resaved)[0].to_dict()
+    assert after["subtitle"] == "sub title"
+    assert after["transition"] == before["transition"]
+    assert after["builds"] == before["builds"]
+
+
 def test_images_survive_keynote(tmp_path, open_in_keynote):
     from test_media import png
 
