@@ -101,8 +101,9 @@ deck.applyStyle({
 });
 ```
 
-`start` (`"on click"`, `"after previous"` or `"with previous"`) and `delay`
-apply to a build's first step; later bullets each come on a click.
+`start` is `"on click"`, `"after previous"` or `"with previous"`, and `delay`
+is the seconds a build's first step waits; as in Keynote, every bullet of a
+build starts the way `start` says.
 `direction` is `"from left"`, `"from right"`, `"from top"` or `"from
 bottom"`, for effects that move. Each build in `slide.builds` reports
 `start`, `delay` and `direction`, and `slide.subtitle` reads or sets the

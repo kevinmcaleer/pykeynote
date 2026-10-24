@@ -89,9 +89,9 @@ deck.save("style-check.key")
 Build effects include `"dissolve"`, `"move in"`, `"wipe"` and `"fade and
 move"` (also `"fade-and-move"`), or Keynote's own ids such as
 `"apple:wipe"`. `start` is `"on click"` (the default), `"after previous"`
-or `"with previous"`, and `delay` is in seconds; both apply to a build's
-first step, and with `delivery="by bullet"` each later bullet comes on a
-click. `direction` is `"from left"`, `"from right"`, `"from top"` or
+or `"with previous"`, as in Keynote's Build Order panel, and `delay` is the
+seconds the build's first step waits. As Keynote does, each bullet of a
+`delivery="by bullet"` build starts the same way as the first. `direction` is `"from left"`, `"from right"`, `"from top"` or
 `"from bottom"` for effects that move (Wipe, Move In, Fade and Move), and
 the same names work for transitions; asking for a direction on an effect
 without one, such as Dissolve, raises `ValueError`. Each `Build` in

@@ -9,9 +9,10 @@
  * in the slide's component.
  *
  * The field values written here are the ones Keynote writes for a default
- * Dissolve, Move In, Wipe or Fade and Move build. A chunk's ``automatic`` and
- * ``delay`` say when it starts: on a click, or by itself after the step
- * before. A direction, such as Wipe's Right to Left, is
+ * Dissolve, Move In, Wipe or Fade and Move build. A chunk's ``automatic``,
+ * ``referent`` and ``delay`` say when it starts: on a click (not automatic),
+ * after the step before (automatic, referent) or with it (automatic, not
+ * referent), ``delay`` seconds later. A direction, such as Wipe's Right to Left, is
  * ``animationAttributes.direction``, which slide transitions share.
  */
 
@@ -102,7 +103,7 @@ export interface BuildOptions {
   duration?: number;
   /** ``"in"`` (the default) or ``"out"``. */
   kind?: "in" | "out";
-  /** When the first step plays: ``"on click"`` (the default), or by itself ``"after previous"`` or ``"with previous"`` step. Later bullets each come on a click. */
+  /** When it plays: ``"on click"`` (the default), or by itself ``"after previous"`` or ``"with previous"`` step. As in Keynote, every bullet starts this way. */
   start?: Start | string;
   /** Seconds the first step waits. Defaults to 0. */
   delay?: number;
@@ -165,7 +166,8 @@ function startName(start: string): Start {
 }
 
 function startOf(chunk: Message | undefined): Start {
-  return chunk === undefined || !chunk.automatic ? "on click" : "after previous";
+  if (chunk === undefined || !chunk.automatic) return "on click";
+  return chunk.referent ? "after previous" : "with previous";
 }
 
 function effectNameOf(effectId: string): string {
@@ -304,11 +306,11 @@ export function addBuild(slide: Slide, target: BuildTarget = "body", options: Bu
     const chunkId = p.newIdentifier();
     const chunk = create("KN.BuildChunkArchive", {
       build: create("TSP.Reference", { identifier: buildId }),
-      // The start and delay belong to the first step; later bullets come on a click.
+      // As Keynote does, every step of the build starts the same way, and the delay is the first step's.
       delay: step === 1 ? delay : 0.0,
       duration: Number(duration),
-      automatic: step === 1 && start !== "on click",
-      referent: true,
+      automatic: start !== "on click",
+      referent: start !== "with previous",
       build_chunk_identifier: create("KN.BuildChunkIdentifierArchive", {
         build_id: create("TSP.UUID", { lower, upper }),
         build_chunk_id: step,

@@ -271,8 +271,8 @@ export class Slide {
    * default for a body with several paragraphs), ``duration``, ``kind``
    * (``"in"`` or ``"out"``), ``start`` (``"on click"``, ``"after previous"``
    * or ``"with previous"``), ``delay`` and ``direction``. Each build plays
-   * after the ones added before it; ``start`` and ``delay`` apply to its
-   * first step, and later bullets each come on a click.
+   * after the ones added before it; ``delay`` is the seconds its first step
+   * waits and, as in Keynote, every bullet starts the way ``start`` says.
    */
   addBuild(target: builds.BuildTarget = "body", effect: string | builds.BuildOptions = {}): builds.Build {
     return builds.addBuild(this, target, typeof effect === "string" ? { effect } : effect);

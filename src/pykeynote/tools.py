@@ -647,8 +647,8 @@ TOOLS: List[Dict[str, Any]] = [
         "function": add_build,
         "description": (
             "Add a build animation to a slide's title, subtitle, body or another object on it. Each "
-            "build plays after the existing ones: its first step on a click, or by itself after or "
-            "with the step before (start), then each further bullet on a click. Saves the deck."
+            "build plays after the existing ones: on a click, or by itself after or "
+            "with the step before (start); every bullet of it starts that way. Saves the deck."
         ),
         "inputSchema": _schema(
             {

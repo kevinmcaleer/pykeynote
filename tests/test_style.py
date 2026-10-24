@@ -1,11 +1,15 @@
 """Build start, delay and direction, transition direction, subtitles and apply_style."""
 
+from pathlib import Path
+
 import pytest
 
 from pykeynote import Presentation, from_markdown
 from pykeynote.cli import main as cli_main
 
 from test_slides import check_consistent, reopen
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def style_check_deck():
@@ -174,3 +178,50 @@ def test_cli(tmp_path, capsys):
     assert "subtitle: sub title" in out
     assert "transition: wipe 0.75s from top" in out
     assert "build: title in, wipe, All at Once, 1s, after previous, delay 0.2s, from bottom" in out
+
+
+# builds-timing.key was made by hand in Keynote 14.5.
+
+def _chunks(slide):
+    p = slide._package
+    return [(c.automatic, c.referent, round(c.delay, 6)) for c in (p.deref(r) for r in slide._slide.buildChunks)]
+
+
+def test_read_keynote_timing_fixture():
+    deck = Presentation.open(FIXTURES / "builds-timing.key")
+    s = deck[0]
+    assert s.subtitle == "subtitle"
+    got = [(b.target, b.effect, b.delivery, round(b.duration, 6), b.steps, b.start, b.delay, b.direction)
+           for b in s.builds]
+    assert got == [
+        ("title", "wipe", "All at Once", 1.0, 1, "on click", 0.0, "from left"),
+        ("subtitle", "wipe", "All at Once", 1.0, 1, "with previous", 0.1, "from left"),
+        ("body", "fade and move", "By Paragraph", 0.3, 4, "after previous", 0.0, None),
+    ]
+    assert [(b.target, b.start, b.delay) for b in deck[1].builds] == [
+        ("title", "on click", 0.0), ("subtitle", "with previous", 0.2)
+    ]
+    assert [(b.target, b.effect, b.direction) for b in deck[2].builds] == [
+        ("body", "fade and move", "from left"), ("title", "fade and move", "from right"), ("subtitle", "wipe", "from right")
+    ]
+    assert [deck[i].builds[0].direction for i in (3, 4, 5)] == ["from right", "from top", "from bottom"]
+    assert [deck[i].transition.direction for i in (6, 7, 8, 9)] == ["from left", "from right", "from top", "from bottom"]
+    assert {deck[i].transition.duration for i in (6, 7, 8, 9)} == {0.75}
+
+
+def test_timing_written_as_keynote_writes_it(tmp_path):
+    keynote = Presentation.open(FIXTURES / "builds-timing.key")
+    deck = Presentation.new()
+    s = deck.add_slide("Title & Bullets", title="title", body=["a", "b", "c", "d"])
+    s.add_subtitle("subtitle")
+    s.add_build("title", "wipe")
+    s.add_build("subtitle", "wipe", start="with previous", delay=0.1)
+    s.add_build("body", "fade and move", delivery="by bullet", duration=0.3, start="after previous")
+    s2 = deck.add_slide("Title & Bullets", title="title")
+    s2.add_subtitle("subtitle")
+    s2.add_build("title", "wipe")
+    s2.add_build("subtitle", "wipe", start="with previous", delay=0.2)
+    again = reopen(deck, tmp_path)
+    assert _chunks(again[0]) == _chunks(keynote[0])
+    assert _chunks(again[1]) == _chunks(keynote[1])
+    assert [b.start for b in again[0].builds] == [b.start for b in keynote[0].builds]

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 import { Presentation, fromMarkdown } from "../index.js";
 import type { Message } from "../protobuf.js";
-import { checkConsistent, reopen } from "./helpers.js";
+import { checkConsistent, fixture, reopen } from "./helpers.js";
 
 async function styleCheckDeck(): Promise<Presentation> {
   const deck = await Presentation.create();
@@ -124,4 +124,40 @@ test("applyTheme keeps the style", async () => {
   const s = (await reopen(deck)).slide(0);
   assert.equal(s.subtitle, "sub title");
   assert.deepEqual(s.toJSON().builds, before);
+});
+
+// builds-timing.key was made by hand in Keynote 14.5.
+function chunks(slide: ReturnType<Presentation["slide"]>): [boolean, boolean, number][] {
+  return (slide.slide.buildChunks as Message[]).map((r) => {
+    const c = slide.pkg.deref(r);
+    return [Boolean(c.automatic), Boolean(c.referent), Math.round((c.delay ?? 0) * 1e6) / 1e6];
+  });
+}
+
+test("read the Keynote timing fixture", async () => {
+  const deck = await fixture("builds-timing.key");
+  const s = deck.slide(0);
+  assert.equal(s.subtitle, "subtitle");
+  assert.deepEqual(
+    s.builds.map((b) => [b.target, b.effect, b.delivery, Math.round(b.duration * 1e6) / 1e6, b.steps, b.start, b.delay, b.direction]),
+    [
+      ["title", "wipe", "All at Once", 1, 1, "on click", 0, "from left"],
+      ["subtitle", "wipe", "All at Once", 1, 1, "with previous", 0.1, "from left"],
+      ["body", "fade and move", "By Paragraph", 0.3, 4, "after previous", 0, null],
+    ],
+  );
+  assert.deepEqual([3, 4, 5].map((i) => deck.slide(i).builds[0].direction), ["from right", "from top", "from bottom"]);
+  assert.deepEqual([6, 7, 8, 9].map((i) => deck.slide(i).transition.direction), ["from left", "from right", "from top", "from bottom"]);
+});
+
+test("timing is written as Keynote writes it", async () => {
+  const keynote = await fixture("builds-timing.key");
+  const deck = await Presentation.create();
+  const s = deck.addSlide("Title & Bullets", { title: "title", body: ["a", "b", "c", "d"] });
+  s.addSubtitle("subtitle");
+  s.addBuild("title", "wipe");
+  s.addBuild("subtitle", { effect: "wipe", start: "with previous", delay: 0.1 });
+  s.addBuild("body", { effect: "fade and move", delivery: "by bullet", duration: 0.3, start: "after previous" });
+  const again = await reopen(deck);
+  assert.deepEqual(chunks(again.slide(0)), chunks(keynote.slide(0)));
 });

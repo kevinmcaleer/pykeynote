@@ -253,10 +253,11 @@ class Slide:
         "fade and move", or Keynote's own id such as "apple:dissolve character".
         ``delivery`` is "all at once" or "by bullet" (also "by paragraph");
         it defaults to "by bullet" for a body with several paragraphs. Each
-        build plays after the ones added before it. ``start`` says when its
-        first step plays: "on click", or by itself "after previous" (or
-        "with previous") step, ``delay`` seconds later; later bullets each
-        come on a click. ``direction`` is "from left", "from right", "from
+        build plays after the ones added before it. ``start`` says when it
+        plays: "on click", or by itself "after previous" or "with previous"
+        step, as Keynote's Build Order panel puts it; ``delay`` is the
+        seconds its first step waits. As in Keynote, each bullet of a build
+        "by bullet" starts the same way as the first. ``direction`` is "from left", "from right", "from
         top" or "from bottom", for effects that move.
         """
         return _builds.add_build(self, target, effect, delivery, duration, kind, start, delay, direction)

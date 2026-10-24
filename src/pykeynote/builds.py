@@ -8,9 +8,10 @@ name their build by a UUID, which is also recorded as the build's identity
 in the slide's component.
 
 The field values written here are the ones Keynote writes for a default
-Dissolve, Move In, Wipe or Fade and Move build. A chunk's ``automatic`` and
-``delay`` say when it starts: on a click, or by itself after the step
-before. A direction, such as Wipe's Right to Left, is
+Dissolve, Move In, Wipe or Fade and Move build. A chunk's ``automatic``,
+``referent`` and ``delay`` say when it starts: on a click (not automatic),
+after the step before (automatic, referent) or with it (automatic, not
+referent), ``delay`` seconds later. A direction, such as Wipe's Right to Left, is
 ``animationAttributes.direction``, which slide transitions share.
 """
 
@@ -188,7 +189,7 @@ def read_builds(slide: "Slide") -> List[Build]:
 def _start_of(chunk: Any) -> str:
     if chunk is None or not chunk.automatic:
         return "on click"
-    return "after previous"
+    return "after previous" if chunk.referent else "with previous"
 
 
 def _start_name(start: str) -> str:
@@ -297,11 +298,12 @@ def add_build(
         chunk_id = p.new_identifier()
         chunk = classes["KN.BuildChunkArchive"]()
         chunk.build.identifier = build_id
-        # The start and delay belong to the first step; later bullets come on a click.
+        # As Keynote does, every step of the build starts the same way, and
+        # the delay is the first step's.
         chunk.delay = float(delay) if step == 1 else 0.0
         chunk.duration = float(duration)
-        chunk.automatic = step == 1 and start != "on click"
-        chunk.referent = True
+        chunk.automatic = start != "on click"
+        chunk.referent = start != "with previous"
         chunk.build_chunk_identifier.build_id.lower = lower
         chunk.build_chunk_identifier.build_id.upper = upper
         chunk.build_chunk_identifier.build_chunk_id = step
